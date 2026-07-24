@@ -1,0 +1,48 @@
+# Music Museum Toolkit — private/local files
+
+# Spotify credentials and environment files
+.env
+.env.*
+!.env.example
+Config/config.local.py
+Config/secrets.py
+
+# Spotify OAuth cache/token files
+.cache
+.cache-*
+.spotify-cache
+*.token
+token.json
+
+# Python-generated files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary and atomic-write files
+*.tmp
+*.bak
+*.swp
+
+# Local toolkit data and checkpoints
+# Keep personal music archives out of a public repository by default.
+Input/
+Output/
+Logs/
+
+# Local credential-bearing configuration, if retained temporarily
+Config/config.py.backup
