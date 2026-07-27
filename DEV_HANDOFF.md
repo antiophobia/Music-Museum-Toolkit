@@ -5,8 +5,10 @@
 Music Museum Toolkit preserves a person's musical history in a permanent,
 locally owned collection that does not depend on Spotify remaining available.
 
-The stable baseline remains v0.3.1. `Toolkit Version` is artifact-creation
-provenance and was not changed for this unreleased manifest feature.
+The overall released application is now **v0.4.0 — Playlist Restoration**. The
+preservation subsystem remains the proven v0.3.1 baseline. `Toolkit Version` is
+artifact-creation provenance, so it was deliberately not changed for release
+branding and existing artifacts were not rewritten.
 
 ## Latest verified live state
 
@@ -106,9 +108,8 @@ not rewritten.
 - Collection and state writes remain atomic and resumable.
 - `python Scripts\archive.py` remains supported and import-safe.
 - `Scripts/main.py` still dispatches `archive.main()` exactly once and retains the
-  restoration placeholder.
-- Spotify scopes remain read-only; restoration and playlist creation are not
-  implemented.
+  restoration workflow as a separate option.
+- Preservation Spotify scopes remain read-only.
 
 ## Configuration and repository state
 
@@ -132,6 +133,85 @@ seen-track resume state. It also covers short stable pages, manifest/scanned-cou
 drift, classification-count drift, clean restart after invalidation, returned
 playlist-ID requests, and complete scans containing non-artifact occurrences.
 
+Restoration v1 expanded the full offline suite to 65 passing tests. The
+pre-live-write traffic, stable-read, uncertain-creation, and local-validation
+hardening expanded it to 79 passing offline tests. Post-creation visibility
+enforcement expands the suite to 88 passing offline tests.
+
+The first controlled live restoration subsequently completed successfully. The
+release validation pass rechecked the saved state and complete report read-only;
+the exact aggregate results are recorded below without publishing private Spotify
+or local identifiers.
+
+## Restoration v1
+
+Option 2 now restores only the latest completed manifest and always creates a new
+Spotify playlist. The existing collection, manifest, and sync state are validated
+offline before authorization. Valid and duplicate occurrences must use exact
+stored track URIs and Museum ID mappings. Local, unavailable, unsupported, and
+malformed occurrences are written to the report as `Not included`.
+
+The verified preservation data builds a 1,274-item plan from 1,282 occurrences:
+3 local, 3 unavailable, and 2 unsupported entries are not included; 3 duplicates
+remain separate planned occurrences. The plan requires 13 batches.
+
+Restoration uses a separate `.cache-restoration` authorization cache and requests
+only the selected visibility's write scope. Spotipy 2.26.0 was inspected:
+`current_user_playlist_create()` uses `POST /me/playlists`. Adds use
+`playlist_add_items()` and reconciliation uses `playlist_items()`.
+
+`Output/restoration_state.json` is written before creation and immediately after a
+destination is returned or recovered. A unique run marker supports uncertain
+creation recovery. Resume always reads the complete remote URI sequence and
+requires an exact duplicate-aware plan prefix. Normal successful batches use
+`position=<confirmed length>` and require the returned snapshot ID before
+advancing by the exact batch size; state/report are checkpointed without rereading
+the growing playlist. Full reconciliation occurs only at initial/resume,
+ambiguous or unconfirmed add outcomes, and final verification.
+
+Full destination reads fetch identity and reported total before and after paging.
+Playlist ID, owner, name, visibility, collaborative state, snapshot ID, and total
+must remain stable, and the URI row count must equal that total. Final completion
+still requires an exact full sequence.
+
+An uncertain creation searches for the exact run marker. One matching owned,
+same-name, noncollaborative playlist is adopted; multiple matches require manual
+review; no match cannot trigger a second create request in the same run. A later
+run searches again and requires a separate explicit confirmation that the Spotify
+account was checked before retrying creation.
+
+The first private live test created and recorded one empty recoverable playlist.
+The creation response reported private, but the following stable Spotify read
+reported public, so the existing strict check stopped before adding any tracks.
+Restoration validates the full local state/report/plan bundle and the
+destination's exact ID, authenticated owner, name, noncollaborative state, and run
+marker before explicitly enforcing the requested visibility with
+`playlist_change_details()`. Bounded stable rereads must return the exact requested
+boolean; null or persistently incorrect visibility stops recoverably before any
+item request.
+
+The hardened live resume reused that same destination rather than creating a
+second playlist, verified private visibility, completed all 13 batches, and passed
+exact final reconciliation. The verified result is:
+
+- 1,282 source manifest occurrences;
+- 1,274 Added rows and 8 Not included rows;
+- 1,271 unique Spotify tracks and 3 duplicate occurrences restored separately;
+- 3 local, 3 unavailable, 2 unsupported, and 0 malformed exclusions;
+- 0 Pending and 0 Failed rows;
+- original positions contiguous from 1 through 1,282;
+- destination positions unique and contiguous from 1 through 1,274;
+- every Added URI matched its stored source track identity;
+- every Added occurrence retained its Museum ID;
+- one consistent run, source snapshot, and destination identity throughout.
+
+Atomic CSV reports under `Output/Restoration Reports/` contain one row per source
+manifest occurrence with destination placement, result, reason, and identity.
+Before authorization, in-progress state and report are validated together for
+format/status, run/source/plan identity, URI sequence, destination settings,
+confirmed bounds, safe report location, full schema, occurrence coverage and
+identity, destination positions, and allowed result semantics.
+
 Validation commands:
 
 ```powershell
@@ -141,13 +221,9 @@ python -m compileall -q Scripts tests
 
 ## Current next step
 
-Run one live read-only preservation scan to create and validate the first
-`Output/playlist_manifest.csv`. Because the existing completed snapshot predates
-the manifest, the toolkit will intentionally bypass the completed-snapshot
-shortcut once. No Spotify write permission is needed.
-
-After verifying the generated 1,282-row manifest against the latest snapshot, the
-next development phase can design playlist restoration semantics. Before writing
-to Spotify, decide whether restoration creates or updates a playlist, define
-confirmation and rollback behavior, handle unavailable/local/unsupported entries,
-and make write-side resume idempotent.
+Playlist restoration v1 is delivered for v0.4.0; it is no longer awaiting its
+first live test. Sensible post-release work includes opt-in assisted matching
+without weakening strict stored-ID defaults, richer local-file handling, Apple
+Music or other service adapters, historical snapshot selection, and a validation
+UI. These are future enhancements, not blockers for the v0.4.0 restoration
+milestone.

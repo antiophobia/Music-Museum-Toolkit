@@ -20,30 +20,34 @@ class ApplicationMenuTests(unittest.TestCase):
         with (
             patch("builtins.input", side_effect=selections),
             patch("main.archive_main") as archive_main,
+            patch("main.restore_main") as restore_main,
             redirect_stdout(output),
         ):
             application.main()
-        return output.getvalue(), archive_main
+        return output.getvalue(), archive_main, restore_main
 
     def test_preserve_invokes_archive_once_then_returns_to_menu(self):
-        output, archive_main = self.run_menu(["1", "3"])
+        output, archive_main, restore_main = self.run_menu(["1", "3"])
         archive_main.assert_called_once_with()
+        restore_main.assert_not_called()
         self.assertGreaterEqual(output.count("[1] Preserve Spotify playlist"), 2)
 
-    def test_restore_placeholder_returns_to_menu(self):
-        output, archive_main = self.run_menu(["2", "3"])
+    def test_restore_dispatches_once_then_returns_to_menu(self):
+        output, archive_main, restore_main = self.run_menu(["2", "3"])
         archive_main.assert_not_called()
-        self.assertIn("Playlist restoration is coming next", output)
+        restore_main.assert_called_once_with()
         self.assertGreaterEqual(output.count("[2] Restore Spotify playlist"), 2)
 
     def test_invalid_selection_is_handled(self):
-        output, archive_main = self.run_menu(["invalid", "3"])
+        output, archive_main, restore_main = self.run_menu(["invalid", "3"])
         archive_main.assert_not_called()
+        restore_main.assert_not_called()
         self.assertIn("Invalid selection. Please choose 1, 2, or 3.", output)
 
     def test_ctrl_c_exits_cleanly(self):
-        output, archive_main = self.run_menu([KeyboardInterrupt()])
+        output, archive_main, restore_main = self.run_menu([KeyboardInterrupt()])
         archive_main.assert_not_called()
+        restore_main.assert_not_called()
         self.assertIn("Exiting Music Museum Toolkit.", output)
 
     def test_ctrl_c_from_archive_returns_to_menu(self):

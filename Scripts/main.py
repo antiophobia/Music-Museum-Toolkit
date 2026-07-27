@@ -1,6 +1,7 @@
 """User-facing menu for Music Museum Toolkit."""
 
 from archive import main as archive_main
+from restore_playlist import main as restore_main
 
 
 MENU = """\
@@ -29,7 +30,11 @@ def main():
                 print("\nPreservation interrupted. Returning to the main menu.")
             print()
         elif selection == "2":
-            print("\nPlaylist restoration is coming next.\n")
+            try:
+                restore_main()
+            except KeyboardInterrupt:
+                print("\nRestoration paused. Returning to the main menu.")
+            print()
         elif selection == "3":
             print("\nGoodbye.")
             return

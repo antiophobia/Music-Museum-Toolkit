@@ -9,6 +9,7 @@ Config/secrets.py
 
 # Spotify OAuth cache/token files
 .cache
+.cache-restoration
 .cache-*
 .spotify-cache
 *.token
