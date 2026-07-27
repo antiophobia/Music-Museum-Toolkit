@@ -1,146 +1,153 @@
 # Music Museum Toolkit Development Handoff
 
-## Mission
+## Mission and version
 
-Preserve a person's musical history in a permanent, locally owned collection that
-does not depend on Spotify remaining available.
+Music Museum Toolkit preserves a person's musical history in a permanent,
+locally owned collection that does not depend on Spotify remaining available.
 
-## Current version
+The stable baseline remains v0.3.1. `Toolkit Version` is artifact-creation
+provenance and was not changed for this unreleased manifest feature.
 
-v0.3.1 — Validation and hardening
+## Latest verified live state
 
-## Verified starting state
+The latest live preservation run reported 1,282 playlist entries and preserved
+1,271 unique Spotify artifacts. It added 9 new artifacts and left 1,262 existing
+artifacts unchanged.
 
-The July 24, 2026 initial live sync reported 1,273 playlist items, scanned 26
-pages, and preserved 1,262 artifacts. The saved CSV has 1,262 unique Museum IDs
-from `MMT-000001` through `MMT-001262` and 1,262 unique Spotify source IDs.
-Spreadsheet duplicate-looking IDs and `########` timestamps were display issues.
+The exhaustive classification was:
 
-The first complete live v0.3.1 scan subsequently accounted for all entries:
-1,262 valid unique tracks, 3 duplicate occurrences, 3 local files, 3 unavailable
-entries, 2 unsupported entries, and 0 malformed entries. These total all 1,273
-entries scanned. It added 0 artifacts and found 0 metadata updates.
+- 1,271 valid unique tracks;
+- 3 duplicate occurrences;
+- 3 local files;
+- 3 unavailable entries;
+- 2 unsupported entries;
+- 0 malformed entries.
 
-## Implementation summary
+These categories total all 1,282 scanned entries.
 
-- Defined `Toolkit Version` as creation provenance. Existing artifacts keep `0.2`;
-  artifacts first created now receive `0.3.1`.
-- Classified every returned playlist entry as valid unique track, duplicate
-  occurrence, local file, unavailable/null, unsupported type, or malformed.
-- Persisted counts and scan-seen IDs in resume state for whole-run accounting.
-- Added a detailed final/unchanged-snapshot report.
-- Added validation for schema, nonempty results, identity fields, Museum ID format
-  and uniqueness, Spotify source-ID uniqueness, existing artifact retention, and
-  immutable Museum ID/Archived At/Notes values.
-- Kept the existing collection schema unchanged.
-- Preserved nonblank optional metadata when a later payload is blank.
-- Avoided rewriting an unchanged permanent collection.
-- Normalized representation-only differences during save comparison, including
-  numeric API values versus string CSV values, null/blanks, index, column order,
-  and row order.
-- Added an integrity check requiring classification categories to total the number
-  of entries scanned.
-- Retained atomic CSV/JSON writes and per-page checkpoint behavior.
+## Source-of-truth ownership
 
-## Files changed
+- `Output/collection.csv` owns unique artifact identity and metadata. It retains
+  stable Museum IDs, first archive timestamps, creation-version provenance, and
+  user Notes.
+- `Output/playlist_manifest.csv` owns occurrence order and classification for the
+  most recently completed playlist snapshot. It records one row per returned
+  entry, including duplicates and non-artifact entries.
+- `Output/playlist_sync.json` owns completed/in-progress snapshot and report state.
+- `Output/collection.checkpoint.csv` and
+  `Output/playlist_manifest.checkpoint.csv` hold resumable page progress and never
+  replace permanent output during a partial scan.
 
-- `Scripts/archive.py` — reporting, resumable counters, safe metadata merge,
-  validation-before-save orchestration, v0.3.1 display.
-- `Scripts/spotify_api.py` — exhaustive item classification, episode retrieval for
-  accounting, safe blank popularity normalization, v0.3.1 provenance.
-- `Scripts/collection_manager.py` — version semantics, integrity/preservation
-  validator, unchanged-save detection.
-- `tests/test_v031.py` — 15 focused regression tests.
-- `README.md` — v0.3.1 usage and behavior.
-- `ARCHITECTURE.md` — created with the complete sync and safety architecture.
-- `CHANGELOG.md` — concise v0.3.1 entry.
-- `DEV_HANDOFF.md` — this handoff.
+## Occurrence manifest implementation
 
-No collection data, playlist input, credentials, or schema columns were changed.
+`Scripts/spotify_api.py` retains its existing classification interface and adds an
+occurrence-producing path. Each returned entry receives a one-based position and
+one of six classifications: valid track, duplicate occurrence, local file,
+unavailable entry, unsupported entry, or malformed entry.
+
+`Scripts/manifest_manager.py` owns manifest version 1. Its schema is:
+
+`Manifest Version`, `Playlist ID`, `Playlist Name`, `Snapshot ID`, `Captured At`,
+`Playlist Position`, `Classification`, `Restorable`, `Museum ID`,
+`Source Track ID`, `Spotify URI`, `Title`, `Artist`, `Album`, `Added At`,
+`Duplicate Of Position`, and `Reason`.
+
+Valid and duplicate occurrences are restorable when they have a usable Spotify
+track ID. Duplicates retain their position, link backward to the first occurrence,
+and map to the same permanent Museum ID. Nonrestorable rows preserve safe metadata
+returned by Spotify and include an explanatory reason without invented values.
+
+`Scripts/archive.py` checkpoints manifest rows after each page. Resume is accepted
+only when the full checkpoint schema, manifest version, playlist identity, single
+capture timestamp, whole/unique/contiguous positions, classifications, Restorable
+values, duplicate links, row count, and classification totals match saved state.
+A changed snapshot or inconsistent checkpoint starts a clean occurrence scan while
+retaining the permanent collection and last completed manifest.
+
+The checkpoint manifest's valid-track-to-first-position mapping is authoritative
+for duplicate detection after resume. The redundant `seen_track_ids` field was
+removed from `playlist_sync.json` writes so resume state cannot drift from
+occurrence state.
+
+After all pages are retrieved, archive orchestration fetches the playlist summary
+again. Playlist ID context, name, snapshot ID, and reported total must match the
+initial summary before either candidate is built or saved. A change, final-check
+rate limit, interruption, or other verification failure preserves checkpoints,
+does not replace either permanent output, and does not record completion.
+
+After stable snapshot verification, a separate completeness gate requires
+`playlist_entries_scanned`, manifest row count, and Spotify's stable reported total
+to match exactly. Classification totals must also equal entries scanned. An
+incomplete result cannot reach candidate construction or saving; its unusable
+checkpoints and in-progress state are invalidated so the next run starts clean.
+Local, unavailable, unsupported, and duplicate rows count as occurrences in this
+reconciliation. Playlist summaries explicitly request Spotify's returned `id`.
+
+After stable verification, orchestration builds and validates both candidates
+before either save. Each permanent file replacement is atomic by itself; the two
+files are not a single filesystem transaction. The collection saves first, the
+manifest saves second, and completed state is recorded only after both succeed. If
+the manifest save fails after the collection save, the prior permanent manifest
+and in-progress checkpoint/state remain so the next run can reconcile safely.
+
+If a completed legacy snapshot has no valid matching permanent manifest, the
+shortcut is bypassed for one full scan. A matching valid manifest is validated and
+not rewritten.
+
+## Preserved v0.3.1 guarantees
+
+- Museum IDs remain permanent, unique, and never renumbered.
+- Existing artifacts cannot be removed.
+- Archived At, Notes, and creation-version provenance remain immutable.
+- Missing optional Spotify metadata cannot erase preserved nonblank values.
+- Collection comparison remains semantic and unchanged collections are not
+  rewritten.
+- Classification accounting remains exhaustive and reconciled with scanned count.
+- Collection and state writes remain atomic and resumable.
+- `python Scripts\archive.py` remains supported and import-safe.
+- `Scripts/main.py` still dispatches `archive.main()` exactly once and retains the
+  restoration placeholder.
+- Spotify scopes remain read-only; restoration and playlist creation are not
+  implemented.
+
+## Configuration and repository state
+
+`Config/config.py` loads Spotify configuration from environment variables and the
+project-root `.env` file. Existing system environment values take priority. `.env`
+and Spotify OAuth cache files are excluded by `.gitignore`; `.env.example` remains
+trackable. Credentials are not embedded in `Config/config.py`.
+
+The project has a `.git` directory. No commit or push was made for this work.
+Personal `Input`, `Output`, and `Logs` data remain ignored.
 
 ## Tests and verification
 
-Commands run:
+The pre-manifest suite had 20 passing tests, and the initial manifest suite had 32.
+The final hardening suite now has 45 passing tests. It covers all previous behavior plus
+stable and changed final snapshot verification, name/total/playlist-ID changes,
+final-verification rate limits and failures, fractional/reordered/duplicate/gapped
+checkpoint positions, capture timestamp consistency, checkpoint/report
+reconciliation, invalid duplicate links, valid resume, and removal of stale
+seen-track resume state. It also covers short stable pages, manifest/scanned-count
+drift, classification-count drift, clean restart after invalidation, returned
+playlist-ID requests, and complete scans containing non-artifact occurrences.
+
+Validation commands:
 
 ```powershell
 python -m unittest discover -s tests -v
 python -m compileall -q Scripts tests
 ```
 
-Result: 15 tests passed; compilation passed.
+## Current next step
 
-An offline integrity check loaded the real collection, validated it with zero
-errors, confirmed 1,262 unique Museum IDs and source IDs, and confirmed that a
-no-change rebuild is exactly equal to the saved DataFrame.
+Run one live read-only preservation scan to create and validate the first
+`Output/playlist_manifest.csv`. Because the existing completed snapshot predates
+the manifest, the toolkit will intentionally bypass the completed-snapshot
+shortcut once. No Spotify write permission is needed.
 
-Covered cases:
-
-- duplicate Museum ID rejection;
-- duplicate Spotify source-ID rejection;
-- invalid Museum ID format;
-- preservation of Museum ID, Archived At, Notes, and creation version;
-- unchanged-sync idempotency;
-- exhaustive playlist classification;
-- null/unavailable track safety;
-- blank popularity acceptance and non-erasure;
-- refusal to save an empty invalid result.
-- semantic comparison of integer/string and DataFrame representation differences;
-- unchanged-save console reporting and proof that the atomic writer is not called;
-- proof that genuine metadata changes still call the atomic writer;
-- complete classification-summary output and total checking.
-
-## Unchanged-save investigation
-
-The first full live v0.3.1 run did rewrite `collection.csv`. The console
-`Collection saved:` line is emitted only after `_atomic_save` returns, so it was
-not merely a reporting error.
-
-The root cause was dtype-sensitive `DataFrame.equals()`. CSV values load as
-strings, while Spotify supplies duration as integers. The merge correctly reported
-those durations as logically unchanged using text normalization, but retained the
-integer representation in the candidate. Pandas therefore considered the frames
-unequal solely because their dtypes differed.
-
-The save path now validates first, compares canonical semantic views, and prints:
-
-```text
-Collection unchanged:
-C:\Users\Admin\OneDrive\Documents\Music Museum Toolkit\Output\collection.csv was validated and not rewritten.
-```
-
-The completed-snapshot shortcut uses this same validated no-write path.
-
-## Popularity finding
-
-The code does not limit playlist item fields and reads `popularity` when present.
-The initial live payload nevertheless produced no popularity values. v0.3.1 treats
-this field as optional: absent/null becomes blank, cannot skip a track, and cannot
-erase an existing nonblank value. A separate per-track enrichment request was not
-added because it would create substantial API traffic for optional metadata.
-
-## Remaining concerns
-
-- Spotify could change playlist payload shapes; unknown shapes will be counted as
-  malformed rather than silently discarded.
-- `Config/config.py` already contains credentials directly in source. This
-  pre-existing secret-handling risk was not changed during the scoped v0.3.1 pass;
-  rotate exposed credentials and move them to environment-based configuration in
-  a separately reviewed security task.
-- There is no repository metadata in this project directory, so no version-control
-  diff or commit was produced.
-
-## Recommended next task
-
-No additional live Spotify scan is required for correctness. An optional
-confirmation run should take the completed-snapshot shortcut, validate the saved
-collection, report that it was not rewritten, and replay the stored complete
-classification summary.
-
-Command:
-
-```powershell
-python Scripts\archive.py
-```
-
-Do not begin v0.4 lifecycle or Obsidian/statistics/page generation until that live
-validation is complete.
+After verifying the generated 1,282-row manifest against the latest snapshot, the
+next development phase can design playlist restoration semantics. Before writing
+to Spotify, decide whether restoration creates or updates a playlist, define
+confirmation and rollback behavior, handle unavailable/local/unsupported entries,
+and make write-side resume idempotent.

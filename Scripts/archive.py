@@ -5,7 +5,9 @@ Version 0.3.1 - Validation and hardening
 
 import json
 import os
+from datetime import datetime, timezone
 
+import pandas as pd
 from tqdm import tqdm
 
 from collection_manager import (
@@ -17,11 +19,23 @@ from collection_manager import (
     save_checkpoint,
     save_collection,
 )
+from manifest_manager import (
+    MANIFEST_COLUMNS,
+    assert_valid_manifest,
+    load_manifest,
+    load_manifest_checkpoint,
+    map_museum_ids,
+    remove_manifest_checkpoint,
+    save_manifest,
+    save_manifest_checkpoint,
+    validate_manifest,
+    validate_manifest_checkpoint,
+)
 from spotify_api import (
     CLASSIFICATION_KEYS,
     SpotifyRateLimit,
     connect_spotify,
-    get_playlist_page,
+    get_playlist_page_occurrences,
     get_playlist_summary,
 )
 
@@ -161,18 +175,65 @@ def _save_state(state):
 
 
 def _checkpoint(
-    artifacts, existing, snapshot_id, next_offset, total, report, seen_track_ids
+    artifacts,
+    existing,
+    manifest,
+    playlist_name,
+    snapshot_id,
+    captured_at,
+    next_offset,
+    total,
+    report,
 ):
+    save_manifest_checkpoint(manifest)
     path = save_checkpoint(build_collection(artifacts, existing))
     _save_state({
         "playlist_id": PLAYLIST_ID,
+        "playlist_name": playlist_name,
         "in_progress_snapshot": snapshot_id,
+        "captured_at": captured_at,
         "next_offset": next_offset,
         "expected_total": total,
         "report": report,
-        "seen_track_ids": sorted(seen_track_ids),
     })
     return path
+
+
+def _summary_context(summary):
+    """Return the fields that must remain stable throughout a complete scan."""
+    return {
+        "playlist_id": summary.get("playlist_id", PLAYLIST_ID),
+        "name": summary.get("name", ""),
+        "snapshot_id": summary.get("snapshot_id", ""),
+        "total": int(summary.get("total", 0)),
+    }
+
+
+def _state_int(state, key, default=-1):
+    try:
+        return int(state.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _scan_is_complete(report, manifest_rows, reported_total):
+    """Return whether occurrence and classification accounting is complete."""
+    scanned = _state_int(report, "playlist_entries_scanned")
+    classification_total = sum(
+        _state_int(report, key, 0) for key in CLASSIFICATION_KEYS
+    )
+    return (
+        scanned >= 0
+        and scanned == len(manifest_rows) == int(reported_total)
+        and classification_total == scanned
+    )
+
+
+def _invalidate_incomplete_scan():
+    """Discard unusable progress so the next run starts from position one."""
+    remove_checkpoint()
+    remove_manifest_checkpoint()
+    _save_state({})
 
 
 def main():
@@ -184,15 +245,9 @@ def main():
 
     existing = load_existing_collection()
     checkpoint = load_checkpoint()
+    permanent_manifest = load_manifest()
+    manifest_checkpoint = load_manifest_checkpoint()
     state = _load_state()
-
-    # Checkpoint rows are newer than permanent rows.
-    combined = existing.copy()
-    if not checkpoint.empty:
-        import pandas as pd
-        combined = pd.concat([existing, checkpoint], ignore_index=True)
-        combined = combined.drop_duplicates("Source Track ID", keep="last")
-    artifacts = _artifacts_from_collection(combined)
 
     spotify = connect_spotify()
     try:
@@ -202,9 +257,11 @@ def main():
         print("No collection files were changed.")
         return
 
-    snapshot_id = summary["snapshot_id"]
-    total = summary["total"]
-    print(f'Live playlist: "{summary["name"]}"')
+    initial_context = _summary_context(summary)
+    snapshot_id = initial_context["snapshot_id"]
+    total = initial_context["total"]
+    playlist_name = initial_context["name"]
+    print(f'Live playlist: "{playlist_name}"')
     print(f"Spotify currently reports {total} items.")
 
     if (
@@ -212,26 +269,77 @@ def main():
         and not existing.empty
         and isinstance(state.get("last_report"), dict)
     ):
-        print("Playlist has not changed since the last completed sync.")
-        save_collection(existing, existing)
-        _print_report(state["last_report"], len(existing))
-        return
+        manifest_errors = validate_manifest(
+            permanent_manifest,
+            existing,
+            PLAYLIST_ID,
+            playlist_name,
+            snapshot_id,
+            state["last_report"],
+        )
+        if not manifest_errors:
+            print("Playlist has not changed since the last completed sync.")
+            save_collection(existing, existing)
+            save_manifest(
+                permanent_manifest,
+                existing,
+                PLAYLIST_ID,
+                playlist_name,
+                snapshot_id,
+                state["last_report"],
+            )
+            _print_report(state["last_report"], len(existing))
+            return
+        print(
+            "The completed snapshot has no valid matching playlist manifest; "
+            "performing one full scan."
+        )
 
-    if state.get("in_progress_snapshot") == snapshot_id:
+    resume_report = state.get("report", {})
+    resume_rows = _state_int(resume_report, "playlist_entries_scanned", 0)
+    can_resume = (
+        state.get("playlist_id") == PLAYLIST_ID
+        and state.get("in_progress_snapshot") == snapshot_id
+        and _state_int(state, "expected_total") == total
+        and (resume_rows == 0 or not checkpoint.empty)
+        and validate_manifest_checkpoint(
+            manifest_checkpoint,
+            PLAYLIST_ID,
+            playlist_name,
+            snapshot_id,
+            resume_report,
+        )
+    )
+
+    if can_resume:
+        combined = pd.concat([existing, checkpoint], ignore_index=True)
+        combined = combined.drop_duplicates("Source Track ID", keep="last")
+        artifacts = _artifacts_from_collection(combined)
+        manifest_rows = manifest_checkpoint.to_dict("records")
         offset = int(state.get("next_offset", 0))
-        seen_track_ids = set(state.get("seen_track_ids", []))
+        first_positions = {
+            _text(row.get("Source Track ID")): int(row["Playlist Position"])
+            for row in manifest_rows
+            if row.get("Classification") == "valid track"
+            and _text(row.get("Source Track ID"))
+        }
+        captured_at = (
+            _text(manifest_rows[0].get("Captured At"))
+            if manifest_rows
+            else state.get("captured_at", "")
+        )
         report = _empty_report(total)
-        _add_counts(report, state.get("report", {}))
+        _add_counts(report, resume_report)
         report["playlist_items_reported"] = total
         print(f"Resuming this playlist version at item {offset + 1}.")
     else:
+        combined = existing.copy()
+        artifacts = _artifacts_from_collection(existing)
+        manifest_rows = []
         offset = 0
-        seen_track_ids = set()
+        first_positions = {}
+        captured_at = datetime.now(timezone.utc).isoformat()
         report = _empty_report(total)
-        # A changed playlist invalidates the page position, but permanent
-        # collection data remains reusable and is never discarded.
-        if not checkpoint.empty:
-            artifacts = _artifacts_from_collection(existing)
         print("Starting a fresh scan of this playlist version.")
 
     pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
@@ -239,17 +347,39 @@ def main():
     stopped_error = None
     try:
         while offset < total:
-            page_artifacts, next_page, page_counts, scanned = get_playlist_page(
-                spotify, PLAYLIST_ID, offset, PAGE_SIZE, seen_track_ids
+            (
+                page_artifacts,
+                next_page,
+                page_counts,
+                scanned,
+                page_manifest_rows,
+            ) = get_playlist_page_occurrences(
+                spotify,
+                PLAYLIST_ID,
+                offset,
+                PAGE_SIZE,
+                report["playlist_entries_scanned"] + 1,
+                playlist_name,
+                snapshot_id,
+                captured_at,
+                first_positions,
             )
             merge_counts = _merge_artifacts(artifacts, page_artifacts)
+            manifest_rows.extend(page_manifest_rows)
             _add_counts(report, page_counts)
             _add_counts(report, merge_counts)
             report["playlist_entries_scanned"] += scanned
             offset += PAGE_SIZE
             _checkpoint(
-                artifacts, existing, snapshot_id, offset, total,
-                report, seen_track_ids
+                artifacts,
+                existing,
+                pd.DataFrame(manifest_rows, columns=MANIFEST_COLUMNS),
+                playlist_name,
+                snapshot_id,
+                captured_at,
+                offset,
+                total,
+                report,
             )
             progress.update(1)
             if not next_page:
@@ -273,18 +403,107 @@ def main():
 
     if offset < total:
         _checkpoint(
-            artifacts, existing, snapshot_id, offset, total,
-            report, seen_track_ids
+            artifacts,
+            existing,
+            pd.DataFrame(manifest_rows, columns=MANIFEST_COLUMNS),
+            playlist_name,
+            snapshot_id,
+            captured_at,
+            offset,
+            total,
+            report,
         )
         print("Progress was checkpointed; rerun to continue.")
         return
 
+    try:
+        final_summary = get_playlist_summary(spotify, PLAYLIST_ID)
+    except SpotifyRateLimit as error:
+        print(
+            "\nAll playlist pages were checkpointed, but Spotify rate-limited "
+            "the final snapshot verification."
+        )
+        print(
+            f"Completion could not be verified ({error.retry_after}-second "
+            "cooldown). No permanent outputs were replaced."
+        )
+        print("Rerun later to resume safely and verify completion.")
+        return
+    except KeyboardInterrupt:
+        print(
+            "\nFinal snapshot verification was interrupted. "
+            "No permanent outputs were replaced."
+        )
+        print("Completed pages remain checkpointed; rerun to continue safely.")
+        return
+    except Exception as error:
+        print(
+            "\nFinal snapshot verification failed. "
+            "No permanent outputs were replaced."
+        )
+        print(f"Spotify verification error: {error}")
+        print("Completed pages remain checkpointed; rerun to continue safely.")
+        return
+
+    final_context = _summary_context(final_summary)
+    if final_context != initial_context:
+        changed_fields = [
+            field
+            for field in ("playlist_id", "name", "snapshot_id", "total")
+            if final_context[field] != initial_context[field]
+        ]
+        print(
+            "\nThe Spotify playlist changed during scanning "
+            f"({', '.join(changed_fields)} changed)."
+        )
+        print("No permanent outputs were replaced and completion was not recorded.")
+        print("Rerun the toolkit to start a clean scan of the new playlist snapshot.")
+        return
+
+    if not _scan_is_complete(report, manifest_rows, total):
+        scanned = _state_int(report, "playlist_entries_scanned")
+        classification_total = sum(
+            _state_int(report, key, 0) for key in CLASSIFICATION_KEYS
+        )
+        print("\nSpotify returned an incomplete occurrence scan.")
+        print(
+            f"Reported playlist total: {total}; entries scanned: {scanned}; "
+            f"manifest rows: {len(manifest_rows)}; "
+            f"classified entries: {classification_total}."
+        )
+        print("No permanent outputs were replaced and completion was not recorded.")
+        _invalidate_incomplete_scan()
+        print("Partial checkpoints were invalidated; the next run will start clean.")
+        return
+
     collection = build_collection(artifacts, combined)
+    manifest = map_museum_ids(
+        pd.DataFrame(manifest_rows, columns=MANIFEST_COLUMNS),
+        collection,
+    )
     assert_valid_collection(collection, existing)
+    assert_valid_manifest(
+        manifest,
+        collection,
+        PLAYLIST_ID,
+        playlist_name,
+        snapshot_id,
+        report,
+    )
     save_collection(collection, existing)
+    save_manifest(
+        manifest,
+        collection,
+        PLAYLIST_ID,
+        playlist_name,
+        snapshot_id,
+        report,
+    )
     remove_checkpoint()
+    remove_manifest_checkpoint()
     _save_state({
         "playlist_id": PLAYLIST_ID,
+        "playlist_name": playlist_name,
         "complete_snapshot": snapshot_id,
         "playlist_total": total,
         "last_report": report,

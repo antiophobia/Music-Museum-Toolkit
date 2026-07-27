@@ -65,9 +65,45 @@ The toolkit currently supports:
 - Incremental synchronization
 - Resume support after interrupted archive sessions
 - Duplicate handling
+- Occurrence-level playlist order and classification manifests
 - Metadata change detection
 - Validation without unnecessary rewrites
 - Preservation-oriented CSV generation
+
+## Running the toolkit on Windows
+
+Double-click **Music Museum Toolkit.bat** in the repository root. The launcher
+opens the application menu from the correct working directory:
+
+```text
+[1] Preserve Spotify playlist to Collection
+[2] Restore Spotify playlist from Collection
+[3] Exit
+```
+
+Option 1 runs the established preservation workflow. Option 2 is a placeholder;
+playlist restoration is planned next and is not implemented yet. The preservation
+workflow can still be run directly with:
+
+```powershell
+python Scripts\archive.py
+```
+
+## Preservation outputs
+
+`Output/collection.csv` is the permanent source of truth for unique artifacts,
+stable Museum IDs, and preserved metadata.
+
+`Output/playlist_manifest.csv` is the source of truth for the most recently
+completed playlist snapshot's occurrence order. It contains one row for every
+returned playlist entry, including duplicate placements, local files, unavailable
+items, unsupported items such as episodes, and malformed entries. Valid and
+duplicate Spotify tracks map back to the same permanent Museum ID.
+
+Interrupted scans checkpoint manifest rows in
+`Output/playlist_manifest.checkpoint.csv`. The permanent manifest is validated and
+replaced atomically only after a complete scan. Restoration remains unimplemented;
+the manifest is preservation groundwork for that future feature.
 
 ---
 

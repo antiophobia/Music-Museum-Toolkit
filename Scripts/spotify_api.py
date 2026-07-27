@@ -147,6 +147,123 @@ def classify_playlist_entries(entries, seen_track_ids=None):
     return artifacts, counts
 
 
+def classify_playlist_occurrences(
+    entries,
+    start_position,
+    playlist_id,
+    playlist_name,
+    snapshot_id,
+    captured_at,
+    first_positions=None,
+):
+    """Classify entries while preserving one ordered row per occurrence."""
+    first_positions = first_positions if first_positions is not None else {}
+    counts = {key: 0 for key in CLASSIFICATION_KEYS}
+    artifacts = []
+    rows = []
+
+    for index, entry in enumerate(entries):
+        position = start_position + index
+        row = {
+            "Manifest Version": "1",
+            "Playlist ID": playlist_id,
+            "Playlist Name": playlist_name,
+            "Snapshot ID": snapshot_id,
+            "Captured At": captured_at,
+            "Playlist Position": position,
+            "Classification": "",
+            "Restorable": "False",
+            "Museum ID": "",
+            "Source Track ID": "",
+            "Spotify URI": "",
+            "Title": "",
+            "Artist": "",
+            "Album": "",
+            "Added At": entry.get("added_at", "") if isinstance(entry, dict) else "",
+            "Duplicate Of Position": "",
+            "Reason": "",
+        }
+
+        if not isinstance(entry, dict):
+            row["Classification"] = "malformed entry"
+            row["Reason"] = "Playlist entry is not an object."
+            counts["malformed_entries"] += 1
+            rows.append(row)
+            continue
+        if "item" not in entry and "track" not in entry:
+            row["Classification"] = "malformed entry"
+            row["Reason"] = "Playlist entry has no item or track field."
+            counts["malformed_entries"] += 1
+            rows.append(row)
+            continue
+
+        item = entry.get("item") if "item" in entry else entry.get("track")
+        if item is None:
+            row["Classification"] = "unavailable entry"
+            row["Reason"] = "Spotify returned no item metadata for this occurrence."
+            counts["unavailable_entries"] += 1
+            rows.append(row)
+            continue
+        if not isinstance(item, dict):
+            row["Classification"] = "malformed entry"
+            row["Reason"] = "Playlist item metadata is not an object."
+            counts["malformed_entries"] += 1
+            rows.append(row)
+            continue
+
+        album = item.get("album") if isinstance(item.get("album"), dict) else {}
+        show = item.get("show") if isinstance(item.get("show"), dict) else {}
+        artists = item.get("artists") if isinstance(item.get("artists"), list) else []
+        row.update({
+            "Spotify URI": item.get("uri", "") or "",
+            "Title": item.get("name", "") or "",
+            "Artist": ", ".join(
+                artist.get("name", "")
+                for artist in artists
+                if isinstance(artist, dict) and artist.get("name")
+            ) or show.get("name", ""),
+            "Album": album.get("name", "") or "",
+        })
+
+        if item.get("is_local"):
+            row["Classification"] = "local file"
+            row["Reason"] = "Local files cannot be restored through Spotify Web API."
+            counts["local_files"] += 1
+            rows.append(row)
+            continue
+        if item.get("type") != "track":
+            row["Classification"] = "unsupported entry"
+            row["Reason"] = (
+                f"Spotify item type {item.get('type')!r} is not a supported track."
+            )
+            counts["unsupported_entries"] += 1
+            rows.append(row)
+            continue
+
+        track_id = item.get("id")
+        if not isinstance(track_id, str) or not track_id.strip():
+            row["Classification"] = "malformed entry"
+            row["Reason"] = "Spotify track has no usable source ID."
+            counts["malformed_entries"] += 1
+            rows.append(row)
+            continue
+
+        row["Source Track ID"] = track_id
+        row["Restorable"] = "True"
+        if track_id in first_positions:
+            row["Classification"] = "duplicate occurrence"
+            row["Duplicate Of Position"] = first_positions[track_id]
+            counts["duplicate_tracks"] += 1
+        else:
+            row["Classification"] = "valid track"
+            first_positions[track_id] = position
+            counts["valid_tracks"] += 1
+            artifacts.append(_artifact_from_track(item, track_id))
+        rows.append(row)
+
+    return artifacts, counts, rows
+
+
 def get_track_metadata(sp, track_id):
     """Fetch one track, briefly retrying only short Spotify cooldowns."""
     if not track_id:
@@ -192,11 +309,12 @@ def get_playlist_summary(sp, playlist_id):
     result = _spotify_call(
         lambda: sp.playlist(
             playlist_id,
-            fields="name,snapshot_id,items.total",
+            fields="id,name,snapshot_id,items.total",
         )
     )
     items = result.get("items") or result.get("tracks") or {}
     return {
+        "playlist_id": result.get("id", playlist_id),
         "name": result.get("name", "Spotify playlist"),
         "snapshot_id": result.get("snapshot_id", ""),
         "total": items.get("total", 0),
@@ -221,6 +339,41 @@ def get_playlist_page(sp, playlist_id, offset, limit=50, seen_track_ids=None):
         return [], result.get("next"), counts, 1
     artifacts, counts = classify_playlist_entries(entries, seen_track_ids)
     return artifacts, result.get("next"), counts, len(entries)
+
+
+def get_playlist_page_occurrences(
+    sp,
+    playlist_id,
+    offset,
+    limit,
+    start_position,
+    playlist_name,
+    snapshot_id,
+    captured_at,
+    first_positions,
+):
+    """Fetch one page and return artifacts, counts, and ordered manifest rows."""
+    result = _spotify_call(
+        lambda: sp.playlist_items(
+            playlist_id,
+            limit=limit,
+            offset=offset,
+            additional_types=("track", "episode"),
+        )
+    )
+    entries = result.get("items", [])
+    if not isinstance(entries, list):
+        entries = [entries]
+    artifacts, counts, rows = classify_playlist_occurrences(
+        entries,
+        start_position,
+        playlist_id,
+        playlist_name,
+        snapshot_id,
+        captured_at,
+        first_positions,
+    )
+    return artifacts, result.get("next"), counts, len(entries), rows
 
 
 def get_tracks_metadata(sp, track_ids):
