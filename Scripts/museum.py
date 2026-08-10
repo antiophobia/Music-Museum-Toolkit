@@ -18,6 +18,10 @@ from manifest_manager import load_manifest
 from museum_import import (
     commit_import, default_input_directory, discover_default_archives, scan_import,
 )
+from profile_engine import (
+    ProfileEngine, TIMEZONE_POLICY, format_count, format_date, format_datetime,
+    format_duration, format_percentage, format_span,
+)
 
 
 MENU = """\
@@ -40,6 +44,115 @@ INPUT_DISPLAY_PATH = "Input\\Spotify Data\\"
 def _duration(milliseconds):
     seconds = int(milliseconds or 0) // 1000; hours, seconds = divmod(seconds, 3600); minutes, seconds = divmod(seconds, 60)
     return f"{hours}h {minutes}m" if hours else f"{minutes}m {seconds}s"
+
+
+def _profile_lines(profile):
+    print("\nQUICK STORY")
+    for sentence in profile.get("quick_story", []): print(sentence)
+    print("\nHIGHLIGHTS")
+    print(f"Recorded events:       {format_count(profile.get('recorded_event_count'))}")
+    if profile.get("total_listening_ms") is not None:
+        print(f"Recorded listening:    {format_duration(profile['total_listening_ms'])}")
+    if profile.get("first_recorded_listen") and profile.get("latest_recorded_listen"):
+        print(f"Recorded span:         {format_span(profile['first_recorded_listen'], profile['latest_recorded_listen'])}")
+    ranking = profile.get("rankings", {}).get("recorded_events")
+    if ranking and ranking.get("rank"):
+        print(f"Overall event rank:    #{ranking['rank']} of {format_count(ranking['of'])}")
+
+
+def _print_profile_summary(profile):
+    print(f"Recorded events:         {format_count(profile['recorded_event_count'])}")
+    for label, key in (("Meaningful plays", "meaningful_plays"), ("Completed plays", "completed_plays"),
+                       ("Natural completions", "natural_completions"), ("Explicit skips", "explicit_skips"),
+                       ("Short plays", "short_plays"), ("Interrupted / other", "interrupted_other")):
+        print(f"{label + ':':25}{format_count(profile[key])}")
+    if profile.get("total_listening_ms") is not None:
+        print(f"{'Listening time:':25}{format_duration(profile['total_listening_ms'])}")
+        print(f"{'Average duration:':25}{format_duration(profile['average_listening_ms'])}")
+        print(f"{'Median duration:':25}{format_duration(profile['median_listening_ms'])}")
+    print("\nRATES")
+    for label, key in (("Meaningful play", "meaningful_play"), ("Completion", "completion"),
+                       ("Natural completion", "natural_completion"), ("Explicit skip", "explicit_skip"),
+                       ("Short play", "short_play")):
+        print(f"{label + ':':25}{format_percentage(profile['rates'][key])}")
+
+
+def _print_profile_timeline(profile, mode="recent"):
+    activity = profile["activity"]
+    print("\nHISTORY")
+    print(f"First recorded: {format_datetime(profile.get('first_recorded_listen'))}")
+    print(f"Latest recorded: {format_datetime(profile.get('latest_recorded_listen'))}")
+    print(f"Active days / weeks / months / years: {profile['active_days']} / {profile['active_weeks']} / {profile['active_months']} / {profile['active_years']}")
+    print(f"Longest gap: {format_duration((profile['gaps']['longest_seconds'] or 0) * 1000) if profile['gaps']['longest_seconds'] is not None else 'Unavailable'}")
+    print(f"Longest daily streak: {profile['streaks']['daily']['longest']} days")
+    print("\nBY YEAR")
+    for label, values in sorted(activity["year"].items()): print(f"{label}  {format_count(values[0]):>8} events  {format_duration(values[1]):>10}")
+    months = sorted(activity["month"].items())
+    if mode == "recent": months = months[-12:]
+    print("\nBY MONTH" + (" — RECENT 12" if mode == "recent" else ""))
+    for label, values in months: print(f"{label}  {format_count(values[0]):>8} events  {format_duration(values[1]):>10}")
+
+
+def _print_profile_context(profile):
+    print("\nTIME & HABITS")
+    print(TIMEZONE_POLICY)
+    for label, values in sorted(profile["activity"]["daypart"].items()):
+        print(f"{label + ':':16}{format_count(values[0])} events | {format_duration(values[1])}")
+    print("\nDEVICES & CONTEXT")
+    for field, groups in profile["context"].items():
+        meta = profile["coverage"].get(field)
+        if not meta or not meta["available"]:
+            print(f"{field.title()}: data unavailable"); continue
+        print(f"{field.title()} — based on {format_count(meta['eligible_event_count'])} of {format_count(meta['total_relevant_event_count'])} events")
+        for label, values in groups.items():
+            print(f"  {label}: {format_count(values['events'])} events | {format_duration(values['listening_ms'])}")
+
+
+def _show_artifact_profile(engine, museum_id):
+    profile = engine.artifact_profile(museum_id); artifact = profile["identity"]
+    while True:
+        print("\n" + "=" * 60 + "\nARTIFACT\n" + "=" * 60)
+        print(f"\n{str(artifact.get('Title','')).upper()}\n{artifact.get('Artist','')}")
+        print(f"\nAlbum: {artifact.get('Album') or 'Unknown'}")
+        if artifact.get("Release Date"): print(f"Released: {format_date(artifact['Release Date'])}")
+        duration = str(artifact.get("Duration (ms)", "")); print(f"Duration: {format_duration(int(duration)) if duration.isdigit() else 'Unavailable'}")
+        print(f"Museum ID: {museum_id}"); _profile_lines(profile)
+        print("\n[1] Listening Summary\n[2] Timeline & History\n[3] Play Behavior\n[4] Time & Habits\n[5] Devices & Context\n[6] Rankings & Milestones\n[7] Playlist & Preservation\n[8] Related Music\n[9] Exhibits & Museum Notes\n[10] Full Museum Record\n[0] Return")
+        choice = input("Select: ").strip()
+        if choice == "0": return
+        if choice in {"1","3"}: _print_profile_summary(profile)
+        elif choice == "2": _print_profile_timeline(profile)
+        elif choice in {"4","5"}: _print_profile_context(profile)
+        elif choice == "6":
+            print("\nRANKINGS")
+            for label, rank in profile["rankings"].items(): print(f"{label.replace('_',' ').title()}: #{rank['rank']} of {format_count(rank['of'])}")
+            print("\nMILESTONES")
+            for item in profile["milestones"]: print(f"{format_count(item['value']) if item['type']=='events' else format_duration(item['value'])}: {format_date(item['reached_at'])}")
+        elif choice == "7":
+            print(f"\nPreserved occurrences: {len(profile['playlist_occurrences'])}; unique playlists: {profile['playlist_count']}; duplicates: {profile['duplicate_occurrences']}")
+            for row in profile["playlist_occurrences"]: print(f"Position {row.get('Playlist Position','?')}: {row.get('Classification','')}; added {format_date(row.get('Added At'))}")
+        elif choice == "8":
+            related=[]
+            for mid, candidate in engine.artifact_by_id.items():
+                if mid==museum_id: continue
+                reasons=[]
+                if candidate.get("Artist")==artifact.get("Artist"): reasons.append("same artist credit")
+                if candidate.get("Album")==artifact.get("Album") and candidate.get("Artist")==artifact.get("Artist"): reasons.append("same album")
+                if engine.playlist_ids[mid] & engine.playlist_ids[museum_id]: reasons.append("same preserved playlist")
+                if reasons: related.append((candidate,reasons))
+            for candidate,reasons in related[:25]: print(f"{candidate.get('Title')} — {', '.join(reasons)}")
+            if not related: print("No preserved/history relationship is available.")
+        elif choice == "9":
+            print("\nEXHIBITS")
+            for item in profile["exhibits"]: print(f"{(item.get('display_number') or 0):03}  {item['title']}  {item['type'].title()}")
+            if artifact.get("Notes"): print(f"\nCollection notes: {artifact['Notes']}")
+        elif choice == "10":
+            print("\nFULL MUSEUM RECORD")
+            track_id = str(artifact.get("Source Track ID", "") or "").strip()
+            if track_id: print(f"Spotify URI: spotify:track:{track_id}")
+            for key, value in artifact.items():
+                if value not in (None, ""): print(f"{key}: {value}")
+            print("Raw listening events are intentionally omitted from the normal Museum view.")
 
 
 def _choose(items, prompt="Select: "):
@@ -148,9 +261,11 @@ def _select_artifact(collection):
     return selected
 
 
-def inspect_artifact_flow(collection, events, manifest):
+def inspect_artifact_flow(collection, events, manifest, engine=None):
     artifact = _select_artifact(collection)
     if artifact is None: return
+    if engine is not None:
+        return _show_artifact_profile(engine, str(artifact.get("Museum ID", "")))
     _show_artifact(artifact, events, manifest)
 
 
@@ -226,6 +341,81 @@ def _entity_flow(collection, events, field):
         _show_entity(collection, events, "artist", selected)
     else:
         _show_entity(collection, events, "album", selected["album"], selected["artist"])
+
+
+def _show_entity_profile(engine, entity_type, title, artist=""):
+    profile = engine.artist_profile(title) if entity_type == "artist" else engine.album_profile(title, artist)
+    heading = title if entity_type == "artist" else f"{title} — {profile['artist']}"
+    while True:
+        print("\n" + "=" * 60 + f"\n{entity_type.upper()}\n" + "=" * 60)
+        print(f"\n{heading.upper()}")
+        print(f"Preserved artifacts: {format_count(len(profile['artifacts']))}")
+        _profile_lines(profile)
+        tracks = profile.get("top_tracks", [])
+        if tracks:
+            print("\nTOP TRACKS")
+            for number, row in enumerate(tracks[:5], 1): print(f"{number}. {row['title']} — {format_count(row['recorded_event_count'])} events")
+        print("\n[1] Listening Summary\n[2] Tracks\n[3] Albums / Artist\n[4] Timeline\n[5] Play Behavior\n[6] Time & Habits\n[7] Devices & Context\n[8] Rankings & Milestones\n[9] Preservation & Exhibits\n[10] Full Museum Record\n[0] Return")
+        choice=input("Select: ").strip()
+        if choice=="0":return
+        if choice in {"1","5"}:_print_profile_summary(profile)
+        elif choice=="2":
+            for number,row in enumerate(tracks,1):print(f"[{number}] {row['title']} — {format_count(row['recorded_event_count'])} events")
+            selected=input("Open track number, or 0 to return: ").strip()
+            if selected.isdigit() and 1<=int(selected)<=len(tracks):_show_artifact_profile(engine,tracks[int(selected)-1]["museum_id"])
+        elif choice=="3":
+            if entity_type=="artist":
+                for row in profile.get("top_albums",[]):print(f"{row['album']}: {format_count(row['events'])} events")
+            else:
+                print(f"Artist: {profile['artist']}")
+                if input("Open Artist Profile? [Y/N]: ").strip().casefold()=="y":_show_entity_profile(engine,"artist",profile["artist"])
+        elif choice=="4":_print_profile_timeline(profile)
+        elif choice in {"6","7"}:_print_profile_context(profile)
+        elif choice=="8":
+            for label,rank in profile["rankings"].items():print(f"{label.replace('_',' ').title()}: #{rank['rank']} of {format_count(rank['of'])}")
+        elif choice=="9":print("Preservation and Exhibit membership is derived from the indexed artifacts; Curated membership is never changed here.")
+        elif choice=="10":
+            print("\nFULL MUSEUM RECORD")
+            for row in profile["artifacts"]:print(f"{row.get('Museum ID')}  {row.get('Title')}  {row.get('Album')}")
+
+
+def _entity_profile_flow(collection, engine, field):
+    query=input(f"\nSearch {field.lower()}: ").strip()
+    choices=search_albums(collection,query) if field=="Album" else search_entities(collection,field,query)
+    if not choices:print(f"\nNo matching preserved {field.lower()} was found.");return
+    for number,value in enumerate(choices,1):
+        print(f"[{number}] {value['album']} — {value['artist']}" if field=="Album" else f"[{number}] {value}")
+    selected=_choose(choices)
+    if selected is None:return
+    if field=="Artist":_show_entity_profile(engine,"artist",selected)
+    else:_show_entity_profile(engine,"album",selected["album"],selected["artist"])
+
+
+def _show_museum_profile(engine):
+    profile=engine.museum_profile()
+    while True:
+        print("\n"+"="*60+"\nLISTENING OVERVIEW\n"+"="*60)
+        _profile_lines(profile)
+        print("\nARCHIVE")
+        print(f"All recorded events:   {format_count(profile['total_recorded_events'])}")
+        print(f"Resolved events:       {format_count(profile['resolved_events'])}")
+        print(f"Unresolved / ambiguous:{format_count(profile['unresolved_events'])} / {format_count(profile['ambiguous_events'])}")
+        print(f"Resolved tracks/artists/albums: {profile['distinct_tracks']} / {profile['distinct_artists']} / {profile['distinct_albums']}")
+        print("\n[1] Top Rankings\n[2] Time History\n[3] Listening Behavior\n[4] Devices & Context\n[5] Archive Coverage\n[6] Milestones\n[0] Return")
+        choice=input("Select: ").strip()
+        if choice=="0":return
+        if choice=="1":
+            for label in ("top_tracks","top_artists","top_albums"):
+                print("\n"+label.replace("top_","").upper())
+                for number,row in enumerate(profile[label][:10],1):print(f"{number}. {row['display']} — {format_count(row['recorded_event_count'])} events")
+        elif choice=="2":_print_profile_timeline(profile)
+        elif choice=="3":_print_profile_summary(profile)
+        elif choice=="4":_print_profile_context(profile)
+        elif choice=="5":
+            print(f"Resolved: {format_count(profile['resolved_events'])}; unresolved: {format_count(profile['unresolved_events'])}; ambiguous: {format_count(profile['ambiguous_events'])}")
+            for field,meta in profile["coverage"].items():print(f"{field}: {format_count(meta['eligible_event_count'])} of {format_count(meta['total_relevant_event_count'])} resolved events")
+        elif choice=="6":
+            for item in profile["milestones"]:print(f"{format_count(item['value']) if item['type']=='events' else format_duration(item['value'])}: {format_date(item['reached_at'])}")
 
 
 def _row_measure(row, metric):
@@ -613,6 +803,7 @@ def main():
             if refreshed != exhibits:
                 save_exhibits(refreshed)
                 exhibits = refreshed
+        engine = ProfileEngine(collection, events, manifest, exhibits)
     except (OSError, ValueError) as error:
         print(f"\nMuseum data cannot be opened safely: {error}"); return
     while True:
@@ -623,20 +814,16 @@ def main():
                 _print_home(collection, events, exhibits, manifest)
             elif choice == "2":
                 exhibits = _browse_exhibits(collection, events, exhibits, manifest)
-            elif choice == "3": inspect_artifact_flow(collection, events, manifest)
-            elif choice == "4": _entity_flow(collection, events, "Artist")
-            elif choice == "5": _entity_flow(collection, events, "Album")
-            elif choice == "6":
-                print("\nLISTENING OVERVIEW")
-                result = listening_overview(collection, events)
-                _print_statistics(result)
-                _print_activity(result)
-                _print_listening_context(result)
+            elif choice == "3": inspect_artifact_flow(collection, events, manifest, engine)
+            elif choice == "4": _entity_profile_flow(collection, engine, "Artist")
+            elif choice == "5": _entity_profile_flow(collection, engine, "Album")
+            elif choice == "6": _show_museum_profile(engine)
             elif choice == "7":
                 if import_museum_data_flow(collection):
                     events = load_events()
                     exhibits = create_starter_exhibits(events, exhibits, collection, manifest)
                     save_exhibits(exhibits)
+                    engine = ProfileEngine(collection, events, manifest, exhibits)
             elif choice == "8": return
             else: print("\nInvalid selection. Please choose 1 through 8.\n")
         except (EOFError, KeyboardInterrupt):

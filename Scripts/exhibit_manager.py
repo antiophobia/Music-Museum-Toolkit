@@ -15,6 +15,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from inspection_manager import inspect_album, inspect_artist, normalize_search
 from listening_archive import classify_playback
+from profile_engine import ProfileEngine, TIMEZONE_POLICY, format_count, format_duration, format_span
 
 
 EXHIBIT_VERSION = "2"
@@ -22,7 +23,6 @@ EXHIBIT_TYPES = {"automatic", "generated", "curated"}
 EXHIBIT_ID_PATTERN = re.compile(r"^EXH-[0-9a-f]{32}$")
 MUSEUM_ID_PATTERN = re.compile(r"^MMT-\d{6}$")
 MIN_RATE_SAMPLE = 5
-TIMEZONE_POLICY = "Stored timestamp hours; UTC when source timestamps are UTC."
 CATEGORIES = {
     "Featured", "Listening", "Artists", "Albums", "Time", "Behavior",
     "Devices & Context", "Preservation", "Generated", "Curated",
@@ -509,6 +509,7 @@ def build_exhibit_index(collection, events, manifest=None):
         "coverage": dict(coverage), "resolved_coverage": dict(resolved_coverage),
         "resolved_events": resolved_events,
         "total_events": len(events or []), "timezone_policy": TIMEZONE_POLICY,
+        "profile_engine": ProfileEngine(collection, events, manifest),
     }
 
 
@@ -683,7 +684,8 @@ def evaluate_automatic_exhibit(exhibit, index, limit=None):
     else:
         rows = _track_rows(index, metric)
     value_field = {
-        "most_listening_time": "events", "most_meaningful_plays": "meaningful",
+        "most_listening_time": "listening_ms", "artist_listening_time": "listening_ms",
+        "album_listening_time": "listening_ms", "most_meaningful_plays": "meaningful",
         "most_completed_plays": "completed", "most_explicit_skips": "explicit_skips",
         "most_natural_completions": "natural_completions", "direct_selection": "direct_selection",
         "late_night": "late_night", "morning_listening": "morning",
@@ -702,7 +704,28 @@ def evaluate_automatic_exhibit(exhibit, index, limit=None):
     story = [f"This exhibit has {total_results} eligible ranked result{'s' if total_results != 1 else ''} calculated from recorded data."]
     if rows:
         top = rows[0]
-        story.append(f"The highest-ranked result is {top['title']} ({top.get('events', 0)} recorded events).")
+        metric_label = {
+            "most_played_tracks": "recorded events", "most_played_artists": "recorded events",
+            "most_played_albums": "recorded events", "most_listening_time": "of recorded listening",
+            "artist_listening_time": "of recorded listening", "album_listening_time": "of recorded listening",
+            "most_meaningful_plays": "meaningful plays", "most_completed_plays": "completed plays",
+            "album_completions": "completed plays", "most_explicit_skips": "explicit skips",
+            "most_natural_completions": "recorded natural completions", "direct_selection": "direct-selection starts",
+            "shuffle_listening": "shuffle-on events", "offline_listening": "offline/downloaded events",
+            "mobile_listening": "mobile events", "desktop_listening": "desktop events",
+            "listening_in_year": "recorded events",
+        }.get(metric)
+        value = top.get(value_field, 0)
+        if metric_label:
+            shown = format_duration(value) if value_field == "listening_ms" else format_count(value)
+            sentence = f"{top['title']} ranks first with {shown} {metric_label}"
+            if value_field not in {"events", "listening_ms"}:
+                sentence += f" across {format_count(top.get('events', 0))} recorded events"
+            story.append(sentence + ".")
+        elif metric == "longest_relationships":
+            story.append(f"{top['title']} ranks first with {format_span(days=top.get('relationship_days', 0))} of recorded history.")
+        else:
+            story.append(f"{top['title']} is the highest-ranked result with {format_count(top.get('events', 0))} recorded events.")
     if metric in {"late_night", "morning_listening", "evening_listening", "weekend_listening", "weekday_listening"}:
         story.append(TIMEZONE_POLICY)
     source_field = {

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — Museum Statistics / Profile Engine
+
+- Added a session-indexed Profile Engine for Artifact, Artist, Album, and Museum biographies.
+- Added friendly formatting, truthful rates, anomaly-safe completion distributions,
+  history, gaps, streaks, peaks, habits, context, coverage, rankings, shares,
+  milestones, preservation, and Exhibit membership statistics.
+- Added deterministic local Quick Stories and primary-metric-aware Exhibit stories.
+- Redesigned Museum inspection around progressive disclosure and cross-links.
+- Added synthetic edge-case and 100,000-event performance coverage.
+
 ## Unreleased
 
 - Added the Automatic Exhibit Engine: schema-v2 saved-view definitions,

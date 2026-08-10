@@ -66,7 +66,7 @@ class ApplicationPipelineTests(unittest.TestCase):
         with zipfile.ZipFile(self.zip_source, "w") as archive:
             archive.writestr("account/plays.json", json.dumps(payload))
         selections = [
-            "3", "7", "y", "y", "3", "gym class", "1",
+            "3", "7", "y", "y", "3", "gym class", "1", "10", "0",
             "2", "m", "1", "Favorite", "y", "gym class", "1", "n",
             "2", "Favorite", "3", "8", "4",
         ]

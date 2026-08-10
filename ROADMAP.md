@@ -1,5 +1,16 @@
 # Music Museum Toolkit Roadmap
 
+## Completed locally for manual validation — Museum Profile Engine
+
+- Central indexed Artifact, Artist, Album, Museum, Time, and Exhibit statistics
+- Coverage/sample-size/timezone trust model and deterministic ranking semantics
+- Objective local Quick Stories and primary-metric-aware Exhibit stories
+- Progressive profile CLI with interconnected drill-down views
+- Structured fields for the future advanced Curated Exhibit Builder
+
+The advanced Exhibit Builder, GUI/mobile presentation, and defensible session
+analysis remain future work.
+
 ## In progress — Museum exhibit and inspection foundation
 
 - Experimental normalized Listening Archive with confirmed, idempotent simple/rich

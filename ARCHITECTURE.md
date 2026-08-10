@@ -1,5 +1,28 @@
 # Music Museum Toolkit Architecture
 
+## Museum Profile Engine (Stage B)
+
+`Scripts/profile_engine.py` is the session-scoped aggregate layer between permanent
+Museum data and presentation. It accepts Collection, normalized Listening Archive,
+manifest, and Exhibits; it never rescans exports or writes authoritative data.
+Museum-ID, URI, track-ID, artist, safe artist+album, event-ID, calendar, playlist,
+and Exhibit indexes are built once. Derived profiles are disposable and in-memory.
+
+Artifact, Artist, Album, and Museum profiles contain classifications, truthful rates,
+completion distributions, history, gaps, streaks, count/time peaks, habits, context,
+coverage, deterministic rankings, shares, milestones, preservation links, and local
+Quick Stories. Renderers consume profiles. The Exhibit index owns a Profile Engine,
+and Exhibit stories use each rule's actual primary metric.
+
+Recorded values, calculated facts, source interpretations, and user-created meaning
+remain distinct. Optional fields carry eligible/relevant counts, percentage, source
+types, and availability. Context comparisons require five events. Recorded hours may
+be UTC because local timezone is unavailable for some sources. Ranks tie by metric,
+normalized display, then stable identity. Album identity is artist+album. Explicit
+collaboration separators receive consistent attribution without changing Museum-wide
+event totals. Session analysis is disabled because no stable session ID is documented.
+Profile fields are reusable by the future advanced Curated Exhibit Builder.
+
 ## System overview
 
 Music Museum Toolkit implements a complete preservation and reconstruction loop:

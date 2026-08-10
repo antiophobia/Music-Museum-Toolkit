@@ -1,5 +1,18 @@
 # 🎵 Music Museum Toolkit
 
+## Museum profiles
+
+Artifact, Artist, Album, and Listening Overview screens now open as progressive
+profiles: deterministic Quick Story and highlights first, then listening, timeline,
+behavior, habits, context, rankings, milestones, preservation, relationships,
+Exhibits, and full records. Related Music states preserved relationships and never
+claims unsupported similarity.
+
+Statistics describe the recorded archive, not necessarily every listen that occurred.
+Coverage identifies optional-field support. Recorded hours may include UTC because
+local time cannot be reconstructed for every source. Profiles and stories are local
+and deterministic; no network or LLM is used.
+
 > **Transform Spotify playlists into a permanent, versioned music archive.**
 
 <p align="center">
