@@ -2,6 +2,68 @@
 
 ## Unreleased
 
+- Added the Automatic Exhibit Engine: schema-v2 saved-view definitions,
+  deterministic/idempotent catalog IDs, safe schema-v1 migration, supported-data
+  initialization, and a shared Collection/Listening Archive/manifest aggregate
+  index. Automatic exhibits persist no copied events or derived result rows.
+- Added a substantial exhibit catalog across Featured, Listening, Artists,
+  Albums, Time, Behavior, Devices & Context, and Preservation, including annual
+  and monthly views, recorded relationships/gaps, completion and explicit-skip
+  evidence, device/offline/shuffle context, playlist occurrences, and preserved
+  release/duration views. Central coverage and five-event rate thresholds avoid
+  invented certainty.
+- Redesigned Museum Home and Browse Exhibits around featured/category discovery,
+  factual quick stories, coverage statements, title/number selection, and direct
+  navigation to Artifact, Artist, Album, year, and month context. Generated and
+  curated ownership remains separate; catalog refresh never overwrites curated
+  membership.
+
+- Made application startup credential-free through lazy Preserve/Restore/Museum
+  imports and delayed Spotify configuration validation. Museum now opens fully
+  offline; selecting an API feature without credentials shows setup help and
+  returns to the root menu.
+- Added idempotent first-run creation of `Input/`, `Input/Spotify Data/`,
+  `Output/`, and `Logs/`, a visible development-build version label, a portable
+  BAT/Python check, and privacy-conscious stack-only runtime error logging.
+- Added empty-Museum and no-ZIP guidance using short relocatable paths while
+  retaining the advanced direct-file/folder import option.
+- Hardened private restoration for Spotify's nullable visibility response with a
+  distinct `private_requested_api_ambiguous` state after exact run-bound identity,
+  local bundle validation, an explicit private-setting request, and bounded reads.
+  Explicit `public=true` contradictions—including contradictions during bounded
+  rereads—stop before item submission and are never corrected silently.
+- Added deterministic deleted-destination handling: conclusive 404 only,
+  historical abandoned-state evidence beside the untouched prior report, explicit
+  replacement confirmation, and fresh run/report/destination identity. A second,
+  destination-specific 404 is required; transient or operation-level ambiguity is
+  not treated as deletion.
+- Added the experimental Listening Archive, exact URI mapping, centralized playback
+  classifications, artifact search/inspection, exhibit identity/persistence and
+  automatic recalculation, plus the Museum application submenu.
+- Added scan-before-import support for simple and rich Spotify playback JSON,
+  conservative exact title+artist fallback, explicit ambiguous/unresolved records,
+  portable authority provenance, and technical-telemetry exclusion.
+- Added automatic discovery of untouched ZIPs under `Input/Spotify Data/`,
+  in-memory JSON-member scanning, traversal/size/count safeguards, basename-only
+  provenance, and continued direct-JSON/extracted-folder support.
+- Added visible archive/member/batch scan progress; 1,000-record default Museum
+  batches; one-time Collection/Event-ID indexes; schema-key classification
+  caching; and field-based `RawCoreStream` playback recognition. Rich technical
+  playback now preserves available URI, duration, reasons, shuffle, downloaded,
+  device, OS, country, social-listening, and session context without admitting
+  unrelated telemetry.
+- Added derived Artifact, Artist, Album, time-pattern and listening-behavior
+  inspection; ranked/fuzzy-selection search; automatic starter exhibits;
+  generated artist results; curated exhibit creation and membership; exhibit
+  reordering and dependency declarations.
+- Expanded terminal inspection to show available URI/duration/preservation data,
+  playlist occurrence history, year/month/hour activity, reasons, shuffle,
+  offline, device, OS, and country context without fabricating missing durations.
+- Added synthetic offline regression coverage; no personal Spotify exports or
+  technical logs are stored in the repository. The 162-test suite runs with no
+  `.env` and no credential placeholders, including root/Museum startup, setup
+  guidance, folder preservation, BAT portability, and redacted logging.
+
 ## v0.4.0 — Playlist Restoration — 2026-07-26
 
 - Released restoration v1 with a guided menu workflow that rebuilds the latest

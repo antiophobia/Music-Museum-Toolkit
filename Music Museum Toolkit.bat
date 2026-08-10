@@ -2,6 +2,15 @@
 setlocal
 cd /d "%~dp0"
 
+where python >nul 2>nul
+if errorlevel 1 (
+    echo.
+    echo Python is required to run Music Museum Toolkit.
+    echo Install Python 3, then double-click this launcher again.
+    pause
+    exit /b 1
+)
+
 python "Scripts\main.py"
 set "toolkit_exit_code=%errorlevel%"
 

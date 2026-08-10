@@ -23,6 +23,7 @@ ALLOWED_STATE_STATUSES = {
     "created",
     "in_progress",
     "blocked",
+    "abandoned_deleted_destination",
     "complete",
 }
 ALLOWED_REPORT_RESULTS = {"Added", "Not included", "Pending", "Failed"}
@@ -336,7 +337,9 @@ def validate_state_for_plan(state, plan):
             "The in-progress restoration does not match the latest completed manifest."
         )
     destination_id = _text(state.get("destination_playlist_id"))
-    if state["status"] in {"created", "in_progress", "blocked"}:
+    if state["status"] in {
+        "created", "in_progress", "blocked", "abandoned_deleted_destination"
+    }:
         if (
             not destination_id
             or not _text(state.get("destination_playlist_url"))
@@ -350,6 +353,17 @@ def validate_state_for_plan(state, plan):
             "Restoration state contains a destination before creation was confirmed."
         )
     return state.get("status") != "complete"
+
+
+def archive_abandoned_state(state):
+    """Preserve a terminal copy of a deleted-destination run beside its report."""
+    archived = dict(state)
+    archived["status"] = "abandoned_deleted_destination"
+    archived["abandoned_at"] = utc_now()
+    archived["abandonment_reason"] = "deleted_destination"
+    path = os.path.splitext(archived["report_path"])[0] + ".state.json"
+    _atomic_json(archived, path)
+    return path
 
 
 def validate_report_for_plan(report_rows, state, plan):

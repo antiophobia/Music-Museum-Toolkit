@@ -629,6 +629,10 @@ class SpotifyRestorationApiTests(unittest.TestCase):
                 spotify = Mock()
                 spotify.current_user.return_value = {"id": "owner"}
                 with (
+                    patch("spotify_api.require_spotify_configuration", return_value={
+                        "client_id": "test", "client_secret": "test",
+                        "redirect_uri": "http://127.0.0.1:8888/callback",
+                    }),
                     patch("spotify_api.SpotifyOAuth") as oauth,
                     patch("spotify_api.spotipy.Spotify", return_value=spotify),
                     patch("spotify_api.requests.Session"),
@@ -755,7 +759,7 @@ class SpotifyRestorationApiTests(unittest.TestCase):
 
 
 class VisibilityEnforcementTests(unittest.TestCase):
-    def test_created_private_then_get_public_is_corrected_before_items(self):
+    def test_created_private_then_get_public_stops_before_items(self):
         plan = small_plan()
         state = restoration_manager.create_initial_state(
             plan,
@@ -790,16 +794,7 @@ class VisibilityEnforcementTests(unittest.TestCase):
             ) as change_visibility,
             patch(
                 "restore_playlist.get_destination_playlist",
-                side_effect=[
-                    destination([], public=True, snapshot="reported-public"),
-                    destination([], public=False, snapshot="verified-private"),
-                    destination([], public=False, snapshot="initial-prefix"),
-                    destination(
-                        plan["uris"],
-                        public=False,
-                        snapshot="final",
-                    ),
-                ],
+                return_value=destination([], public=True, snapshot="reported-public"),
             ),
             patch(
                 "restore_playlist.add_restoration_items",
@@ -815,21 +810,15 @@ class VisibilityEnforcementTests(unittest.TestCase):
                 spotify, state, "owner"
             )
             restoration_manager.update_report(report, state)
-            result = restore_playlist._restore_verified_destination(
-                spotify,
-                state,
-                report,
-                plan,
-                "owner",
-            )
+            with self.assertRaisesRegex(ValueError, "explicitly public"):
+                restore_playlist._restore_verified_destination(
+                    spotify, state, report, plan, "owner"
+                )
         create.assert_called_once()
-        change_visibility.assert_called_once_with(
-            spotify, "destination", False
-        )
-        add.assert_called_once()
-        self.assertEqual(result["status"], "complete")
+        change_visibility.assert_not_called()
+        add.assert_not_called()
 
-    def test_existing_public_destination_is_corrected_without_second_create(self):
+    def test_existing_public_destination_stops_without_second_create(self):
         plan, state, report = visibility_bundle(public=False)
         spotify = object()
         with (
@@ -839,16 +828,7 @@ class VisibilityEnforcementTests(unittest.TestCase):
             ) as change_visibility,
             patch(
                 "restore_playlist.get_destination_playlist",
-                side_effect=[
-                    destination([], public=True, snapshot="public"),
-                    destination([], public=False, snapshot="private"),
-                    destination([], public=False, snapshot="initial"),
-                    destination(
-                        plan["uris"],
-                        public=False,
-                        snapshot="final",
-                    ),
-                ],
+                return_value=destination([], public=True, snapshot="public"),
             ),
             patch(
                 "restore_playlist.add_restoration_items",
@@ -863,19 +843,13 @@ class VisibilityEnforcementTests(unittest.TestCase):
             state = restore_playlist._ensure_destination(
                 spotify, state, "owner"
             )
-            result = restore_playlist._restore_verified_destination(
-                spotify,
-                state,
-                report,
-                plan,
-                "owner",
-            )
+            with self.assertRaisesRegex(ValueError, "explicitly public"):
+                restore_playlist._restore_verified_destination(
+                    spotify, state, report, plan, "owner"
+                )
         create.assert_not_called()
-        change_visibility.assert_called_once_with(
-            spotify, "destination", False
-        )
-        add.assert_called_once()
-        self.assertEqual(result["status"], "complete")
+        change_visibility.assert_not_called()
+        add.assert_not_called()
 
     def test_existing_requested_visibility_needs_no_mutation(self):
         plan, state, report = visibility_bundle(public=False)
@@ -999,7 +973,7 @@ class VisibilityEnforcementTests(unittest.TestCase):
         with (
             patch(
                 "restore_playlist.get_destination_playlist",
-                return_value=destination([], public=True),
+                return_value=destination([], public=None),
             ),
             patch(
                 "restore_playlist.change_restoration_playlist_visibility",
@@ -1018,46 +992,134 @@ class VisibilityEnforcementTests(unittest.TestCase):
         add.assert_not_called()
         self.assertEqual(state, original_state)
 
-    def test_incorrect_or_null_visibility_stops_after_bounded_reads(self):
+    def test_explicit_public_visibility_stops_immediately(self):
         plan, state, report = visibility_bundle(public=False)
-        for label, stale_value in (("public", True), ("null", None)):
-            with self.subTest(label=label):
-                with (
-                    patch(
-                        "restore_playlist.get_destination_playlist",
-                        side_effect=[
-                            destination([], public=True),
-                            destination([], public=stale_value),
-                            destination([], public=stale_value),
-                            destination([], public=stale_value),
-                        ],
-                    ) as read_destination,
-                    patch(
-                        "restore_playlist."
-                        "change_restoration_playlist_visibility"
-                    ) as change_visibility,
-                    patch("restore_playlist.time.sleep") as sleep,
-                    patch(
-                        "restore_playlist.add_restoration_items"
-                    ) as add,
-                ):
-                    with self.assertRaisesRegex(
-                        ValueError, "could not be verified as private"
-                    ):
-                        restore_playlist._restore_verified_destination(
-                            object(),
-                            state,
-                            report,
-                            plan,
-                            "owner",
-                        )
-                change_visibility.assert_called_once()
-                self.assertEqual(read_destination.call_count, 4)
-                self.assertEqual(sleep.call_count, 2)
-                add.assert_not_called()
-                self.assertEqual(
-                    state["last_confirmed_destination_length"], 0
+        with (
+            patch(
+                "restore_playlist.get_destination_playlist",
+                return_value=destination([], public=True),
+            ) as read_destination,
+            patch(
+                "restore_playlist.change_restoration_playlist_visibility"
+            ) as change_visibility,
+            patch("restore_playlist.time.sleep") as sleep,
+            patch("restore_playlist.add_restoration_items") as add,
+        ):
+            with self.assertRaisesRegex(ValueError, "explicitly public"):
+                restore_playlist._restore_verified_destination(
+                    object(), state, report, plan, "owner"
                 )
+        change_visibility.assert_not_called()
+        read_destination.assert_called_once()
+        sleep.assert_not_called()
+        add.assert_not_called()
+        self.assertEqual(state["last_confirmed_destination_length"], 0)
+
+    def test_verified_private_null_visibility_uses_distinct_ambiguous_state(self):
+        plan, state, report = visibility_bundle(public=False)
+        spotify = object()
+        with (
+            patch("restore_playlist.get_destination_playlist", side_effect=[
+                destination([], public=None), destination([], public=None),
+                destination([], public=None), destination([], public=None),
+            ]),
+            patch("restore_playlist.change_restoration_playlist_visibility") as change,
+            patch("restore_playlist.save_restoration_state", side_effect=lambda value: value),
+            patch("restore_playlist.save_report"),
+            patch("restore_playlist.time.sleep"),
+        ):
+            result = restore_playlist._enforce_destination_visibility(
+                spotify, state, report, plan, "owner"
+            )
+        change.assert_called_once_with(spotify, "destination", False)
+        self.assertIsNone(result["public"])
+        self.assertEqual(state["visibility_verification"], "private_requested_api_ambiguous")
+        self.assertTrue(restore_playlist._validate_destination(result, state, "owner"))
+
+    def test_explicit_public_after_private_request_still_stops(self):
+        plan, state, report = visibility_bundle(public=False)
+        with (
+            patch("restore_playlist.get_destination_playlist", side_effect=[
+                destination([], public=None), destination([], public=True),
+                destination([], public=True), destination([], public=True),
+            ]), patch("restore_playlist.change_restoration_playlist_visibility"),
+            patch("restore_playlist.time.sleep"),
+        ):
+            with self.assertRaisesRegex(ValueError, "became explicitly public"):
+                restore_playlist._enforce_destination_visibility(object(), state, report, plan, "owner")
+
+    def test_any_public_contradiction_blocks_later_null_ambiguity(self):
+        plan, state, report = visibility_bundle(public=False)
+        with (
+            patch("restore_playlist.get_destination_playlist", side_effect=[
+                destination([], public=None), destination([], public=None),
+                destination([], public=True), destination([], public=None),
+            ]),
+            patch("restore_playlist.change_restoration_playlist_visibility"),
+            patch("restore_playlist.time.sleep"),
+            patch("restore_playlist.save_restoration_state") as save_state,
+            patch("restore_playlist.save_report") as save_report,
+        ):
+            with self.assertRaisesRegex(ValueError, "became explicitly public"):
+                restore_playlist._enforce_destination_visibility(
+                    object(), state, report, plan, "owner"
+                )
+        save_state.assert_not_called()
+        save_report.assert_not_called()
+
+
+class DeletedDestinationTests(unittest.TestCase):
+    def test_only_conclusive_404_is_deleted_destination(self):
+        self.assertTrue(restore_playlist._destination_was_deleted(
+            restore_playlist.SpotifyException(404, -1, "not found")
+        ))
+        self.assertFalse(restore_playlist._destination_was_deleted(
+            restore_playlist.SpotifyException(500, -1, "server")
+        ))
+
+    def test_destination_specific_second_404_is_required(self):
+        state = restoration_state(["a"])
+        original = restore_playlist.SpotifyException(404, -1, "operation not found")
+        with patch(
+            "restore_playlist.get_destination_playlist",
+            side_effect=restore_playlist.SpotifyException(404, -1, "playlist not found"),
+        ):
+            self.assertTrue(restore_playlist._confirm_destination_deleted(
+                object(), state, original
+            ))
+        with patch(
+            "restore_playlist.get_destination_playlist",
+            return_value=destination([]),
+        ):
+            self.assertFalse(restore_playlist._confirm_destination_deleted(
+                object(), state, original
+            ))
+
+    def test_abandonment_preserves_historical_state_and_report_path(self):
+        state = restoration_state(["a"])
+        with (
+            patch("restore_playlist.archive_abandoned_state") as archive,
+            patch("restore_playlist.save_restoration_state", side_effect=lambda value: value),
+        ):
+            result = restore_playlist._abandon_deleted_destination(state)
+        archive.assert_called_once()
+        self.assertEqual(result["status"], "abandoned_deleted_destination")
+        self.assertEqual(result["report_path"], "report.csv")
+
+    def test_replacement_uses_new_run_and_report_identity(self):
+        plan, old_state, _ = visibility_bundle(public=False)
+        old_state["run_id"] = "old-run"
+        old_state["report_path"] = restoration_manager.report_path_for_run("old-run")
+        with (
+            patch("restore_playlist.new_run_id", return_value="new-run"),
+            patch("restore_playlist.report_path_for_run", return_value=restoration_manager.report_path_for_run("new-run")),
+            patch("restore_playlist.save_report"),
+            patch("restore_playlist.save_restoration_state", side_effect=lambda value: value),
+        ):
+            state, report = restore_playlist._create_replacement_state(plan, old_state)
+        self.assertEqual(state["run_id"], "new-run")
+        self.assertNotEqual(state["report_path"], old_state["report_path"])
+        self.assertTrue(all(row["Run ID"] == "new-run" for row in report))
 
 
 class ReconciliationTests(unittest.TestCase):

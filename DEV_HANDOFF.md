@@ -113,10 +113,12 @@ not rewritten.
 
 ## Configuration and repository state
 
-`Config/config.py` loads Spotify configuration from environment variables and the
-project-root `.env` file. Existing system environment values take priority. `.env`
-and Spotify OAuth cache files are excluded by `.gitignore`; `.env.example` remains
-trackable. Credentials are not embedded in `Config/config.py`.
+`Config/config.py` lazily loads Spotify configuration from environment variables
+and the project-root `.env` file only for Spotify API features. Existing system
+environment values take priority. Missing credentials no longer prevent root-menu
+or Museum startup. `.env` and Spotify OAuth cache files are excluded by
+`.gitignore`; `.env.example` remains trackable. Credentials are not embedded in
+`Config/config.py`.
 
 The project has a `.git` directory. No commit or push was made for this work.
 Personal `Input`, `Output`, and `Logs` data remain ignored.
@@ -227,3 +229,96 @@ without weakening strict stored-ID defaults, richer local-file handling, Apple
 Music or other service adapters, historical snapshot selection, and a validation
 UI. These are future enhancements, not blockers for the v0.4.0 restoration
 milestone.
+
+## Unreleased Museum prototype handoff
+
+The full offline suite now contains 162 passing tests with
+`python -m unittest discover -s tests -v`; `python -m compileall -q Scripts tests`
+also completes successfully. The suite runs without `.env`,
+`SPOTIFY_CLIENT_ID`, or `SPOTIFY_CLIENT_SECRET`; it no longer supplies placeholder
+client values and makes no network calls.
+
+First-run startup is now offline-first. `main.py` no longer imports `archive.py`
+or `restore_playlist.py` at module load. It initializes safe local directories,
+shows `v0.4.0 + Museum development build`, loads Museum independently, and checks
+Spotify configuration before importing either API workflow. Missing configuration
+opens a setup/return screen rather than raising. `spotify_api.py` still validates
+again immediately before authentication.
+
+`app_runtime.py` creates `Input/`, `Input/Spotify Data/`, `Output/`, and `Logs/`
+without modifying existing contents. Unexpected feature errors return to the root
+menu and write stack-only diagnostics under `Logs/`; exception messages, raw
+export records, secrets/tokens, and unnecessary absolute project/home paths are
+excluded or redacted. Expected Museum import/data errors remain concise and do
+not create diagnostic noise.
+
+Restoration accepts
+persistently nullable private visibility only as
+`private_requested_api_ambiguous`, after exact identity/bundle verification and an
+explicit private update request; it never labels that response confirmed private.
+Any explicit public contradiction stops before item submission. A second,
+destination-specific 404 confirms deletion before an abandoned state is archived
+beside the old CSV report. Replacement requires confirmation and receives a fresh
+run, report, and playlist. Network/API or operation-level ambiguity is not treated
+as deletion, and an abandoned state is a recognized terminal resume state rather
+than a retry loop.
+
+Museum work is intentionally isolated in `listening_archive.py`,
+`museum_import.py`, `inspection_manager.py`, `exhibit_manager.py`, and `museum.py`.
+The BAT-accessible menu first discovers untouched ZIPs under
+`Input/Spotify Data/`, lists them, asks whether to scan them, previews simple and
+rich Spotify playback records, reports identity/malformed/already-imported/
+telemetry counts, and requires a second confirmation before atomic import. Direct
+JSON and extracted folders remain supported by manual path. ZIP JSON is decoded
+in memory; archives are never extracted or overwritten. Member count and
+uncompressed-size limits are enforced, unsafe traversal/absolute paths are
+rejected, and only source basenames are persisted. Technical telemetry is not
+normalized as Museum playback data.
+
+Listening Archive version 3 is ordered UTF-8 JSONL with deterministic Event IDs,
+source provenance, exact/fallback identity state, supporting playback context,
+and `historical_authoritative`/`provisional`/`reconciled` authority vocabulary.
+Only historical import exists now. Version 1 and 2 prototype events upgrade in
+memory without changing Event IDs.
+
+Identity is exact URI first; title+artist fallback requires one unique exact
+normalized Collection match. Ambiguity/unresolved records remain preserved but
+unassigned. Statistics are derived for artifacts, artists, albums, years/months/
+hours, reasons, device/OS/country, shuffle, and offline behavior. The terminal
+Artifact view includes available Spotify URI, duration, preservation metadata,
+activity/context sections, and playlist occurrence history. Unknown duration
+concepts are omitted rather than rendered as zero. Album choices are separated by
+artist so same-title albums do not aggregate accidentally. Human search supports
+exact, combined, prefix/token and conservative fuzzy selection without identity
+mutation.
+
+Exhibit schema version 2 adds categories, featured state, and display preferences
+to stable UUID-derived IDs, reorderable display numbers, types, constraints,
+rules, explicit curated membership, notes, visibility, and dependencies. Version
+1 files migrate without renumbering, changing IDs, or changing user content.
+Catalog definitions have deterministic IDs and are appended only when their
+source data can produce a result.
+
+Automatic exhibit definitions are saved views. `exhibits.json` stores neither
+Listening Archive payloads nor derived rows. One aggregate index per Home/Browse
+session supplies track, preserved artist-credit, artist+album, year/month,
+behavior/context, and manifest-occurrence results. Reopening a session rebuilds
+the index, so source changes refresh results without a cache migration. Ambiguous
+and unresolved events are excluded from artifact rankings; optional-field
+coverage is explicit; completion/skip rates require five events; time buckets use
+stored timestamp hours and state the UTC policy. Preserved multi-artist credits
+are not split or inferred.
+
+The CLI now presents featured Home previews and category-based browsing with
+factual quick stories and direct Artifact/Artist/Album/year/month drill-down.
+Generated Artist/Album results remain dynamic. Curated add/remove and full
+display-order reordering remain wired into the CLI, and catalog refresh never
+recalculates or overwrites curated membership. The rule/catalog separation is the
+foundation for a later custom exhibit builder.
+
+Remaining risks/work: validate against real exports without retaining them; add
+playlist-change/On Repeat/Wrapped adapters; add generated-exhibit creation UX;
+define defensible session adjacency; and design the opt-in update/reconciliation
+prompt. No live Spotify listening synchronization exists. All personal and
+generated data stays under ignored local paths. This work remains Unreleased and
+must not be labeled v0.5.0 until explicitly released.

@@ -17,7 +17,7 @@ from urllib3.util.retry import Retry
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from Config.config import CLIENT_ID, CLIENT_SECRET, REDIRECT_URI
+from Config.config import require_spotify_configuration
 
 
 MAX_AUTOMATIC_WAIT_SECONDS = 60
@@ -40,6 +40,7 @@ class SpotifyRateLimit(Exception):
 
 
 def connect_spotify():
+    configuration = require_spotify_configuration()
     print("Connecting to Spotify...")
 
     # Give Spotipy a session whose transport returns 429 responses directly.
@@ -61,9 +62,9 @@ def connect_spotify():
 
     sp = spotipy.Spotify(
         auth_manager=SpotifyOAuth(
-            client_id=CLIENT_ID,
-            client_secret=CLIENT_SECRET,
-            redirect_uri=REDIRECT_URI,
+            client_id=configuration["client_id"],
+            client_secret=configuration["client_secret"],
+            redirect_uri=configuration["redirect_uri"],
             scope="playlist-read-private playlist-read-collaborative",
             cache_path=os.path.join(os.path.dirname(__file__), "..", ".cache"),
         ),
@@ -80,6 +81,7 @@ def connect_spotify():
 
 def connect_spotify_restoration(public=False):
     """Authenticate restoration separately with only the required write scope."""
+    configuration = require_spotify_configuration()
     print("Connecting to Spotify for playlist restoration...")
     session = requests.Session()
     no_transport_retries = Retry(
@@ -103,9 +105,9 @@ def connect_spotify_restoration(public=False):
     )
     sp = spotipy.Spotify(
         auth_manager=SpotifyOAuth(
-            client_id=CLIENT_ID,
-            client_secret=CLIENT_SECRET,
-            redirect_uri=REDIRECT_URI,
+            client_id=configuration["client_id"],
+            client_secret=configuration["client_secret"],
+            redirect_uri=configuration["redirect_uri"],
             scope=scope,
             cache_path=os.path.join(
                 os.path.dirname(__file__), "..", ".cache-restoration"

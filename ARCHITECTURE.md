@@ -12,6 +12,156 @@ Spotify source playlist
     -> new Spotify destination playlist + permanent restoration report
 ```
 
+### Offline-first runtime boundary
+
+`Scripts/main.py` imports only the small `app_runtime.py` startup layer. Preserve,
+Restore, and Museum handlers are loaded lazily after the user selects them. This
+keeps the root menu and complete Museum flow independent from Spotipy and Spotify
+configuration.
+
+`Config/config.py` no longer raises merely because it was imported without a
+`.env`. It reloads local values and validates them only when a Spotify connection
+is requested. The root menu performs that preflight before importing Preserve or
+Restore and presents setup help when values are missing. `spotify_api.py` repeats
+the requirement at the connection boundary so direct/internal callers cannot
+connect with empty values.
+
+`app_runtime.py` derives the relocatable project root from its own file and safely
+creates `Input/`, `Input/Spotify Data/`, `Output/`, and `Logs/` with
+`exist_ok=True`. It never clears those directories. Its unexpected-error logger
+stores exception type and sanitized stack frames, excludes exception messages,
+redacts token/secret environment values, replaces local root/home paths, and does
+not log raw export records.
+
+## Experimental Museum foundation
+
+Museum data adds independent, local layers without changing Collection or
+Manifest ownership:
+
+- `listening_archive.py` validates normalized events, preserves source/file/version
+  provenance, derives deterministic event IDs, imports idempotently, and maps exact
+  Spotify URIs to Museum IDs. It can conservatively resolve one exact normalized
+  title+artist match; duplicates remain ambiguous and unknowns remain unresolved.
+- `museum_import.py` first discovers untouched ZIP archives in
+  `Input/Spotify Data/`, and also accepts a direct JSON file or extracted folder.
+  ZIP members are inspected in memory without extraction or source modification.
+  The adapter separates playback-shaped Museum data from unsupported records and
+  technical telemetry, adapts simple/rich Spotify schemas, and produces a preview
+  before commit.
+- `inspection_manager.py` performs read-only, normalization-aware artifact search
+  and derives Artifact/Artist/Album/time/behavior statistics at query time.
+- `exhibit_manager.py` persists stable Exhibit IDs independently from reorderable
+  display numbers, recalculates automatic/generated results, protects curated
+  membership, and declares small data dependencies for future dirty checking.
+- `museum.py` owns the experimental import/inspection/exhibit CLI and refuses
+  malformed Museum data.
+
+The Listening Archive contains museum data and normally hidden supporting context
+(shuffle, device, OS, transition reasons, offline state). It does not accept or
+surface unrelated engineering telemetry. Import timestamps describe ingestion;
+source timestamps remain the historical evidence. Only source basenames (or a ZIP
+basename plus JSON-member basename) enter the archive; private absolute paths do
+not. Personal exports and all generated Museum files remain under ignored
+`Input/` and `Output/` paths.
+
+The implemented import flow is:
+
+```text
+untouched Spotify ZIP(s), direct JSON, or extracted folder
+    -> schema/content scan (no permanent extraction)
+    -> deterministic record batches with cached schema classification
+    -> normalize/resolve through one set of Collection identity indexes
+    -> read-only preview and identity counts
+    -> explicit user confirmation
+    -> normalized Listening Archive atomic replacement
+    -> search and derived inspection
+    -> automatic/generated/curated exhibits
+```
+
+ZIP input is bounded by JSON-member count, individual uncompressed member size,
+and total uncompressed JSON size. Absolute, drive-qualified, and parent-traversal
+member paths are rejected. Corrupt, encrypted, oversized, or unsafe members are
+reported as malformed; the original ZIP is never changed.
+
+Playback classification is centralized in `listening_archive.classify_playback`.
+Explicit source evidence outranks thresholds; sub-30-second events are short plays,
+not inferred skips, and remote/error/transfer interruptions remain other events.
+
+### Listening Archive schema and identity
+
+`Output/listening_archive.jsonl` is JSON Lines rather than CSV because playback
+events have many optional supporting fields. It remains plain UTF-8, portable,
+line-inspectable, deterministic, and migration-friendly. Version 3 records own:
+
+- stable Event ID and archive version;
+- source type/file/record/schema and import timestamp;
+- event/end timestamps and available track metadata;
+- exact Spotify/Source Track/Museum identity;
+- play duration and optional supporting behavior, social-listening, and session
+  context fields;
+- match status/method and authority status.
+
+Event IDs are SHA-256 hashes of source type/record identity plus musical/playback
+facts. Import time, source filename, schema label, and row order are excluded, so
+an identical copied/re-exported record merges while retaining the first imported
+provenance filename. A same-ID/different-content collision is rejected. Writes validate every record,
+sort by timestamp and Event ID, write a temporary file, and atomically replace the
+archive. A candidate archive is fully validated before atomic replacement.
+Version 1 and 2 records are upgraded in memory when read without changing their
+Event IDs.
+
+Authority values are `historical_authoritative`, `provisional`, and `reconciled`.
+Only historical downloaded-data import is implemented; the latter two reserve a
+non-breaking path for future synchronization and reconciliation.
+
+Identity resolution order is exact Spotify URI, then one unique exact normalized
+title+artist match when no URI exists. Multiple title+artist candidates become
+`ambiguous`; all other failures remain `unresolved`. Fuzzy search is presentation
+only and never enters this resolver.
+
+Museum preview and confirmed import share a configurable, deterministic batch
+iterator whose default size is 1,000 records. Collection indexes for Spotify URI,
+Source Track ID, Museum ID, and normalized title+artist are built once per run;
+existing Listening Archive Event IDs are also indexed once. Batch boundaries do
+not enter Event ID generation. Confirmed import accumulates and validates the
+complete candidate archive before its existing temporary-file/atomic-replacement
+write, so a later batch failure cannot leave a partial permanent archive.
+
+### Exhibit ownership
+
+`Output/exhibits.json` schema version 2 stores stable `EXH-<uuid>` identities,
+independent positive display numbers, type, category, featured state, display
+preferences, rule, constraints, explicit curated membership, notes, visibility,
+and dependencies. Version 1 definitions upgrade in memory without changing IDs,
+order, notes, constraints, or curated membership; the next atomic save writes the
+version 2 form.
+
+Automatic exhibits are materialized-query definitions, never event containers.
+Their deterministic catalog IDs and rule keys make initialization idempotent.
+`build_exhibit_index()` walks Collection, Listening Archive, and manifest sources
+once per Museum view session and builds reusable track, preserved artist-credit,
+artist+album, calendar, playback-context, and occurrence aggregates. Exhibit
+evaluation reads this shared index and returns ephemeral structured rows,
+coverage metadata, and factual quick-story sentences. No derived rows or source
+events are persisted in `exhibits.json`; reopening Home/Browse rebuilds the index,
+so Collection, event, or manifest changes invalidate results naturally.
+
+Only events with a non-ambiguous Museum ID that exists in Collection enter
+artifact/entity rankings. Optional-field coverage is counted separately. Rates
+are suppressed below the central five-event minimum. Time-of-day rules use the
+stored timestamp hour and explicitly describe the UTC policy. Artist aggregation
+uses the entire preserved `Artist` field as one credit string rather than
+guessing collaborator boundaries. Album identity is normalized artist credit plus
+album title, preventing same-title albums by different artists from merging.
+
+Generated Artist/Album results recalculate on demand. Curated membership changes
+only through curated operations and catalog initialization only appends supported
+automatic definitions. The CLI exposes category browsing, featured previews,
+cross-navigation, curated creation/add/remove, and display-order reordering.
+Dependencies cover listening events, timestamps, identity, collection metadata,
+playback context, and manifest occurrences for future builder and
+affected-exhibit workflows without changing ownership.
+
 The records have deliberately separate ownership:
 
 - **Collection** (`Output/collection.csv`): one permanent row per unique Spotify
@@ -29,10 +179,12 @@ The records have deliberately separate ownership:
 ## Responsibilities
 
 - `Music Museum Toolkit.bat` anchors the working directory at the repository root
-  and starts the application menu on Windows. It pauses when Python returns an
-  unexpected nonzero exit code.
-- `Scripts/main.py` owns the user-facing menu. It dispatches one preservation run
-  or one restoration workflow and returns control to the menu.
+  and starts the application menu on Windows. It reports a missing Python runtime
+  clearly and pauses when Python returns an unexpected nonzero exit code.
+- `Scripts/app_runtime.py` owns version display, idempotent first-run directories,
+  relocatable user paths, and privacy-conscious unexpected-error logs.
+- `Scripts/main.py` owns the user-facing menu, lazy feature imports, credential
+  preflight/setup help, the top-level error boundary, and return control.
 - `Scripts/archive.py` orchestrates a complete or resumed sync and prints reports.
 - `Scripts/spotify_api.py` authenticates, retrieves playlist pages, classifies every
   entry, converts supported tracks to source artifacts, and emits occurrence rows.

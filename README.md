@@ -89,26 +89,138 @@ The toolkit now completes both directions of the preservation loop:
 - safely resume a partially completed restoration after reconciling the remote
   playlist against the deterministic plan.
 
-## Running the toolkit on Windows
+## First run on Windows
 
-Double-click **Music Museum Toolkit.bat** in the repository root. The launcher
-opens the application menu from the correct working directory:
+No command prompt is required for normal use:
+
+1. Extract or clone Music Museum Toolkit.
+2. Double-click **Music Museum Toolkit.bat**.
+3. Choose **Museum**.
+4. If prompted, put your untouched Spotify ZIPs in `Input/Spotify Data/`.
+5. Choose **Import Museum Data**, review the preview, and confirm.
+6. Search, inspect, and browse your Museum.
+
+On every startup, the Toolkit safely creates missing `Input/`,
+`Input/Spotify Data/`, `Output/`, and `Logs/` directories. Existing folders and
+files are never erased or replaced by startup initialization. The launcher moves
+to its own repository directory before starting Python, so double-clicking works
+regardless of Windows' current working directory.
+
+The credential-free application menu is:
 
 ```text
+Music Museum Toolkit
+v0.4.0 + Museum development build
+
 [1] Preserve Spotify playlist to Collection
 [2] Restore Spotify playlist from Collection
-[3] Exit
+[3] Museum
+[4] Exit
 ```
 
-Option 1 runs the established read-only preservation workflow. Option 2 guides
-the user through restoring the latest completed playlist manifest into a new
-Spotify playlist. The launcher always starts from the repository root, even when
-double-clicked from another working directory, and pauses on an unexpected Python
-failure. The preservation workflow can still be run directly with:
+Museum import and browsing are entirely local and do not require Spotify API
+credentials. Preserve and Restore connect directly to Spotify and require a
+Spotify Developer client ID and client secret. Those modules are loaded only when
+their menu options are selected. If configuration is missing, the Toolkit shows
+setup help and returns to the menu—there is no startup traceback and no fake
+credential file is created.
 
-```powershell
-python Scripts\archive.py
-```
+For Preserve or Restore, copy `.env.example` to `.env`, add your Spotify
+Developer values, and keep that file private. The Toolkit never prints those
+values. This setup is optional for Museum-only use.
+
+Option 3 opens the experimental Museum prototype. The normal import workflow is:
+
+1. Download your Spotify data archive.
+2. Put each untouched `.zip` file in `Input/Spotify Data/`.
+3. Double-click **Music Museum Toolkit.bat**.
+4. Choose **Museum**.
+5. Choose **Import Museum Data**.
+6. Confirm the detected ZIP scan, review the scan-only counts, and confirm the
+   permanent import.
+7. Search or inspect artifacts and browse exhibits.
+
+The ZIPs are opened read-only. Supported JSON members are decoded in memory and
+are never permanently extracted into the repository. The scanner recognizes data
+from record structure rather than ZIP filenames, rejects unsafe member paths, and
+never overwrites the original archive. A direct JSON file or previously extracted
+folder remains supported through the manual-path prompt.
+
+The scan-only preview reports recognized files, playback records, exact-URI and
+title/artist-only records, already-imported events, unresolved and ambiguous
+identity, malformed records, and ignored technical telemetry. No Listening Archive
+write occurs until the user confirms the preview. Both simple
+`endTime`/artist/title history and richer URI/playback-context records are
+supported through a source adapter.
+
+Large supported members are processed in deterministic batches of 1,000 records
+by default. The terminal reports the active archive/member, batch number, records
+processed, playback records found, and identity counts. Collection identity
+indexes are built once per scan, so batch progress does not repeat a full
+Collection walk for every playback event. Batch size does not affect Event IDs or
+normalized output.
+
+On an empty first run, Museum Home explains where to place ZIPs and directs the
+user to option 7. If no ZIP is present, Import Museum Data gives the same short
+relative path and returns safely; an advanced direct-file/folder prompt remains
+available. Unexpected internal failures are recorded as stack-only, redacted
+diagnostics under `Logs/`, while expected missing-data, malformed-input, and menu
+errors stay as concise terminal messages.
+
+The Museum can search preserved artifacts by song, artist, album, combined terms,
+Spotify URI, or Museum ID. It derives Artifact, Artist, Album, and Listening
+Overview statistics from the private local Listening Archive. Artifact inspection
+shows available preserved identity, duration and preservation metadata; playback
+counts; time and completion aggregates; year/month/hour activity; reasons;
+shuffle/offline state; device, OS and country context; and playlist occurrence
+history. Unsupported values are omitted rather than displayed as invented zeroes.
+Search may offer a conservative fuzzy selection, but fuzzy results never change
+permanent identity.
+
+The Automatic Exhibit Engine turns the Museum into a browse-first experience.
+Museum Home highlights supported featured exhibits, and Browse Exhibits groups
+saved views into Featured, Listening, Artists, Albums, Time, Behavior, Devices &
+Context, Preservation, Generated, and Curated sections. The supported catalog is
+created from the data actually available and includes listening leaders, recorded
+relationships, completion and explicit-skip evidence, time-of-day and calendar
+views, device/offline/shuffle context, playlist mainstays, repeated occurrences,
+and preserved release/duration views. An exhibit can be opened by display number
+or title, and ranked results link directly to Artifact, Artist, Album, year, or
+month context.
+
+Automatic exhibits are saved definitions, not snapshots: `exhibits.json` never
+contains copied listening-event payloads or derived result rows. Results refresh
+from the current Collection, Listening Archive, and manifest whenever a Museum
+browse session builds its shared aggregate index. Each view states its basis,
+coverage, and a short factual story. Skip/completion rates require at least five
+recorded events, unknown fields are not invented, unresolved or ambiguous events
+do not enter artifact rankings, and timestamp bucketing uses stored timestamp
+hours (UTC when the source timestamp is UTC). Preserved multi-artist credits are
+treated as one credit string; the engine does not infer individual collaborators.
+
+Generated Artist/Album views remain derived on demand. Curated exhibits remain
+separate user-owned lists with explicit add/remove membership and reorderable
+display order; catalog refresh never rewrites them.
+
+Museum data is deliberately separate from `collection.csv`:
+
+- `Output/listening_archive.jsonl` stores validated, normalized,
+  provenance-bearing playback events in deterministic timestamp/Event-ID order;
+- `Output/exhibits.json` stores validated exhibit definitions and dependency
+  declarations;
+- Collection identity is linked by exact Spotify URI when available, or by one
+  unique exact normalized title+artist match when no URI was exported;
+- unresolved events remain unresolved and never mutate artifact identity.
+
+Playback labels are centralized: a recorded event is any normalized event;
+meaningful plays reach 30 seconds; completed plays use explicit completion or a
+documented 90% duration fallback; explicit skips require explicit evidence;
+short plays are not automatically skips; other interruptions remain distinct.
+
+The archive currently imports downloaded history as
+`historical_authoritative`. Its schema also reserves `provisional` and
+`reconciled` authority states for a future update pipeline. Live listening sync
+is intentionally not implemented in this release-in-progress.
 
 ## Preservation outputs
 

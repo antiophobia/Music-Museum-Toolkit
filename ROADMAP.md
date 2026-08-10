@@ -1,5 +1,22 @@
 # Music Museum Toolkit Roadmap
 
+## In progress — Museum exhibit and inspection foundation
+
+- Experimental normalized Listening Archive with confirmed, idempotent simple/rich
+  Spotify playback import from untouched ZIPs, direct JSON, or extracted folders
+- Read-only Artifact, Artist, Album, and Listening Overview inspection with
+  readable activity, playback-context, and occurrence-history sections
+- Automatic Exhibit Engine with schema-v2 saved definitions, deterministic
+  supported catalog initialization, a shared session aggregate index, featured
+  Museum Home, category browsing, factual stories/coverage, and drill-down to
+  Artifact, Artist, Album, year, and month views
+- Separate generated and curated ownership, including curated add/remove
+  operations and display-order reordering that catalog refresh never overwrites
+- Next: broader Spotify event adapters (playlist change, On Repeat, Wrapped),
+  defensible session adjacency, import-ledger summaries, a user-facing custom
+  exhibit builder over the versioned rule schema, and a continuous Museum
+  update/reconciliation pipeline
+
 ## Delivered
 
 ### v0.4.0 — Playlist Restoration — 2026-07-26

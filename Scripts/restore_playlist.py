@@ -9,6 +9,7 @@ from collection_manager import load_existing_collection
 from manifest_manager import load_manifest
 from restoration_manager import (
     MAX_BATCH_SIZE,
+    archive_abandoned_state,
     batches,
     build_report,
     build_restoration_plan,
@@ -289,6 +290,13 @@ def _validate_destination_identity(destination, state, owner_id):
 
 def _validate_destination_visibility(destination, state):
     expected_public = state["destination_visibility"] == "public"
+    if (
+        not expected_public
+        and destination.get("public") is None
+        and state.get("visibility_verification")
+        == "private_requested_api_ambiguous"
+    ):
+        return True
     if destination.get("public") is not expected_public:
         raise ValueError("Destination playlist visibility changed.")
     return True
@@ -315,7 +323,16 @@ def _enforce_destination_visibility(
     _validate_destination_identity(destination, state, owner_id)
     expected_public = state["destination_visibility"] == "public"
     if destination.get("public") is expected_public:
+        state["visibility_verification"] = (
+            "confirmed_public" if expected_public else "confirmed_private"
+        )
         return destination
+
+    if not expected_public and destination.get("public") is True:
+        raise ValueError(
+            "Destination playlist is explicitly public although private was "
+            "requested. No items were submitted."
+        )
 
     change_restoration_playlist_visibility(
         spotify,
@@ -329,13 +346,89 @@ def _enforce_destination_visibility(
             spotify, state["destination_playlist_id"]
         )
         _validate_destination_identity(destination, state, owner_id)
+        if not expected_public and destination.get("public") is True:
+            raise ValueError(
+                "Destination playlist became explicitly public while private "
+                "verification was in progress. No items were submitted."
+            )
         if destination.get("public") is expected_public:
+            state["visibility_verification"] = (
+                "confirmed_public" if expected_public else "confirmed_private"
+            )
             return destination
+
+    if (
+        not expected_public
+        and destination.get("public") is None
+    ):
+        state["visibility_verification"] = "private_requested_api_ambiguous"
+        state = save_restoration_state(state)
+        update_report(report_rows, state)
+        save_report(report_rows, state["report_path"])
+        return destination
 
     label = "public" if expected_public else "private"
     raise ValueError(
         f"Destination playlist visibility could not be verified as {label}."
     )
+
+
+def _destination_was_deleted(error):
+    return isinstance(error, SpotifyException) and error.http_status == 404
+
+
+def _confirm_destination_deleted(spotify, state, original_error):
+    """Require a destination-specific not-found read before abandonment."""
+    if not _destination_was_deleted(original_error):
+        return False
+    try:
+        get_destination_playlist(spotify, state["destination_playlist_id"])
+    except SpotifyException as verification_error:
+        if _destination_was_deleted(verification_error):
+            return True
+        raise
+    return False
+
+
+def _abandon_deleted_destination(state):
+    """Retain the old report and a terminal state record for a deleted target."""
+    state["status"] = "abandoned_deleted_destination"
+    archive_abandoned_state(state)
+    return save_restoration_state(state)
+
+
+def _start_replacement_restoration(spotify, owner_id, plan, old_state):
+    print(
+        "\nSpotify confirms that the saved destination playlist no longer exists.\n"
+        "The previous restoration run was preserved as abandoned; its report "
+        "was not reused.\n"
+    )
+    choice = input("Start a replacement restoration with a new run? [Y/N]: ").strip().lower()
+    if choice != "y":
+        return None
+    state, report_rows = _create_replacement_state(plan, old_state)
+    state = _ensure_destination(spotify, state, owner_id)
+    update_report(report_rows, state)
+    save_report(report_rows, state["report_path"])
+    state = _restore_verified_destination(
+        spotify, state, report_rows, plan, owner_id
+    )
+    return state, report_rows
+
+
+def _create_replacement_state(plan, old_state):
+    """Create fresh local identity/report after replacement was confirmed."""
+    run_id = new_run_id()
+    report_path = report_path_for_run(run_id)
+    public = old_state["destination_visibility"] == "public"
+    state = create_initial_state(
+        plan, run_id, old_state["destination_playlist_name"], public, report_path
+    )
+    report_rows = build_report(plan, run_id)
+    save_report(report_rows, report_path)
+    state = save_restoration_state(state)
+    validate_restoration_bundle(state, report_rows, plan)
+    return state, report_rows
 
 
 def _checkpoint_confirmation(
@@ -569,25 +662,44 @@ def main():
 
     _print_plan(plan)
     if in_progress:
-        print("\nIncomplete restoration found:\n")
-        print(f'Playlist: {state.get("destination_playlist_name", "")}')
-        print(
-            "Confirmed items: "
-            f'{state.get("last_confirmed_destination_length", 0)} / '
-            f'{state.get("total_planned_item_count", 0)}'
-        )
-        print(f'Visibility: {state.get("destination_visibility", "")}\n')
-        print("[1] Resume restoration")
-        print("[2] Cancel")
-        try:
-            resume_choice = input("\nSelect an option: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nRestoration cancelled.")
-            return
-        if resume_choice != "1":
-            print("\nRestoration cancelled.")
-            return
-        public = state["destination_visibility"] == "public"
+        if state.get("status") == "abandoned_deleted_destination":
+            print("\nThe previous destination was confirmed deleted and its run was archived.\n")
+            try:
+                replace_choice = input("Start a replacement restoration with a new run? [Y/N]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\nRestoration cancelled.")
+                return
+            if replace_choice != "y":
+                print("\nNo replacement playlist was created.")
+                return
+            try:
+                state, report_rows = _create_replacement_state(plan, state)
+            except (OSError, ValueError) as error:
+                print(f"\nReplacement restoration cannot begin safely: {error}")
+                return
+            public = state["destination_visibility"] == "public"
+            in_progress = False
+        else:
+            print("\nIncomplete restoration found:\n")
+            print(f'Playlist: {state.get("destination_playlist_name", "")}')
+            print(
+                "Confirmed items: "
+                f'{state.get("last_confirmed_destination_length", 0)} / '
+                f'{state.get("total_planned_item_count", 0)}'
+            )
+            visibility = state.get("visibility_verification") or state.get("destination_visibility", "")
+            print(f'Visibility: {visibility}\n')
+            print("[1] Resume restoration")
+            print("[2] Cancel")
+            try:
+                resume_choice = input("\nSelect an option: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\nRestoration cancelled.")
+                return
+            if resume_choice != "1":
+                print("\nRestoration cancelled.")
+                return
+            public = state["destination_visibility"] == "public"
     else:
         try:
             choice = _confirm_new_run(plan)
@@ -655,6 +767,39 @@ def main():
             "Restoration progress was retained."
         )
         return
+    except SpotifyException as error:
+        if not state.get("destination_playlist_id") or not _destination_was_deleted(error):
+            print(f"\nRestoration stopped safely: {error}")
+            return
+        try:
+            deleted = _confirm_destination_deleted(spotify, state, error)
+        except Exception as verification_error:
+            print(
+                "\nRestoration stopped safely because destination deletion "
+                f"could not be confirmed: {verification_error}"
+            )
+            return
+        if not deleted:
+            print(
+                "\nRestoration stopped safely. Spotify returned not-found for "
+                "an operation, but the saved destination still exists."
+            )
+            return
+        old_state = _abandon_deleted_destination(state)
+        try:
+            replacement = _start_replacement_restoration(
+                spotify, identity["id"], plan, old_state
+            )
+        except (EOFError, KeyboardInterrupt):
+            print("\nReplacement restoration cancelled.")
+            return
+        except Exception as replacement_error:
+            print(f"\nReplacement restoration stopped safely: {replacement_error}")
+            return
+        if replacement is None:
+            print("\nNo replacement playlist was created.")
+            return
+        state, report_rows = replacement
     except Exception as error:
         print(f"\nRestoration stopped safely: {error}")
         if state.get("destination_playlist_url"):
